@@ -48,6 +48,7 @@ from odata_client import ODataClient
 import json
 from datetime import datetime
 from typing import Optional, List, Dict, Any
+from field_filter import filter_fields, resolve_allowed_fields
 
 
 def get_entities():
@@ -88,6 +89,9 @@ def get_schema(
     meta = client.get_metadata()
     schema = (meta.get("entity_sets") or {}).get(entity_name, {})
     props = schema.get("properties") or {}
+    allowed = resolve_allowed_fields(entity_name)
+    if allowed:
+        props = {k: v for k, v in props.items() if k in allowed}
 
     return list(props.keys())
 
@@ -118,7 +122,7 @@ def get_first_records(
             for i in range(len(sample)):
                 sample[i]["Товары"] = None
                 sample[i]["Услуги"] = None
-        
+        sample = filter_fields(entity_name, sample)
         result_dict = json.dumps(sample, ensure_ascii=False)
     else:
         result_dict = []
@@ -150,7 +154,8 @@ def find_record(
     entity = getattr(client, entity_name)
     sample = entity.filter(f"{field} eq '{value}'").get().values()
     if sample:
-        return json.dumps(sample[0], ensure_ascii=False)
+        rec = filter_fields(entity_name, sample[0])
+        return json.dumps(rec, ensure_ascii=False)
     else:
         return {}
     
@@ -181,7 +186,8 @@ def create_record(
         created_record = entity.create(record_dict)
 
         if created_record:
-            return json.dumbs(created_record, ensure_ascii=False)
+            created_record = filter_fields(entity_name, created_record)
+            return json.dumps(created_record, ensure_ascii=False)
         else:
             return {'error': 'Запись не была создана'}
     except Exception as e:
@@ -315,8 +321,8 @@ def get_records_by_date_range(
     
     response = query.get()
     sample = response.values()
-
     if sample:
+        sample = filter_fields(entity_name, sample)
         result_dict = json.dumps(sample, ensure_ascii=False)
     else:
         result_dict = []
@@ -372,6 +378,7 @@ def get_records_with_expand(
     sample = response.values()
 
     if sample:
+        sample = filter_fields(entity_name, sample)
         result_dict = json.dumps(sample, ensure_ascii=False)
     else:
         result_dict = []
