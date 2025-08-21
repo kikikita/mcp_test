@@ -474,16 +474,12 @@ class MCPServer:
             resp = builder.get()
         except Exception as e:
             logger.warning("GET failed for %s with %s", object_name, e)
-            self.client.http_code = None
-            self.client.http_message = str(e)
-            self.client.odata_code = None
-            self.client.odata_message = None
             return [], {
-                "http_code": None,
-                "http_message": str(e),
-                "odata_error_code": None,
-                "odata_error_message": None,
-                "last_id": None,
+                "http_code": self.client.get_http_code(),
+                "http_message": self.client.get_http_message() or str(e),
+                "odata_error_code": self.client.get_error_code(),
+                "odata_error_message": self.client.get_error_message(),
+                "last_id": self.client.get_last_id(),
                 "data": None,
             }
         vals = resp.values() or []
@@ -518,22 +514,27 @@ class MCPServer:
         safe = (value or "").replace("'", "''")
         return f"{field} eq '{safe}'"
 
-    def _compose_expr_substr(self, field: str, value: str) -> str:
-        safe = (value or "").replace("'", "''")
+    def _compose_expr_substr(self, field: str, value: Any) -> str:
+        safe = str(value or "").replace("'", "''")
         return f"substringof('{safe}', {field})"
 
-    def _compose_expr_substr_ci(self, field: str, value: str) -> str:
-        safe = (value or "").lower().replace("'", "''")
+    def _compose_expr_substr_ci(self, field: str, value: Any) -> str:
+        safe = str(value or "").lower().replace("'", "''")
         return f"substringof('{safe}', tolower({field}))"
 
     def _progressive_attempts_for_string(
         self, object_name: str, field: str, value: str, include_only_elements: bool
     ) -> List[str]:
-        attempts = [
-            self._compose_expr_eq(field, value),
-            self._compose_expr_substr(field, value),
-            self._compose_expr_substr_ci(field, value),
-        ]
+        attempts = [self._compose_expr_eq(field, value)]
+        schema = self.get_entity_schema(object_name) or {}
+        props: Dict[str, Dict[str, Any]] = schema.get("properties", {}) or {}
+        if props.get(field, {}).get("type") == "Edm.String":
+            attempts.extend(
+                [
+                    self._compose_expr_substr(field, value),
+                    self._compose_expr_substr_ci(field, value),
+                ]
+            )
         if include_only_elements and self._has_isfolder(object_name):
             attempts = [f"{a} and IsFolder eq false" for a in attempts]
         return attempts
@@ -553,9 +554,9 @@ class MCPServer:
         # Определим строковые поля по типу из схемы
         schema = self.get_entity_schema(object_name) or {}
         props: Dict[str, Dict[str, Any]] = schema.get("properties", {}) or {}
-        string_fields: List[Tuple[str, str]] = []
+        string_fields: List[Tuple[str, Any]] = []
         for k, v in filters.items():
-            if isinstance(v, str) and (props.get(k, {}).get("type", "").endswith("String")):
+            if props.get(k, {}).get("type") == "Edm.String":
                 string_fields.append((k, v))
 
         # 1) substringof для каждого строкового поля поверх eq остальных
@@ -859,6 +860,7 @@ class MCPServer:
 
         def exec_attempts(attempt_list: List[str]) -> Dict[str, Any]:
             nonlocal top, expand, object_name
+            res: Dict[str, Any] = {}
             for flt in attempt_list:
                 vals, res = self._exec_get(object_name, flt, top, expand)
                 if vals:
@@ -868,6 +870,8 @@ class MCPServer:
                     else:
                         res["data"] = vals
                     return res
+                if res.get("http_code") == 400 and res.get("odata_error_code") == 21:
+                    continue
             # если все пусто — вернём последний res (или “пусто”)
             if attempt_list:
                 return res
