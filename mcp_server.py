@@ -516,11 +516,11 @@ class MCPServer:
 
     def _compose_expr_substr(self, field: str, value: Any) -> str:
         safe = str(value or "").replace("'", "''")
-        return f"substringof('{safe}', {field})"
+        return f"substringof({field}, '{safe}')"
 
     def _compose_expr_substr_ci(self, field: str, value: Any) -> str:
         safe = str(value or "").lower().replace("'", "''")
-        return f"substringof('{safe}', tolower({field}))"
+        return f"substringof(tolower({field}), '{safe}')"
 
     def _progressive_attempts_for_string(
         self, object_name: str, field: str, value: str, include_only_elements: bool
@@ -844,6 +844,15 @@ class MCPServer:
 
         Возвращает первый непустой результат (учитывая `top`).
         """
+        logger.info(
+            "search_object: type=%s entity=%s filters_type=%s top=%s expand=%s filters=%r",
+            user_type,
+            user_entity,
+            type(user_filters).__name__,
+            top,
+            expand,
+            user_filters,
+        )
         object_name = self.resolve_entity_name(user_entity, user_type)
         if not object_name:
             return {
@@ -862,7 +871,14 @@ class MCPServer:
             nonlocal top, expand, object_name
             res: Dict[str, Any] = {}
             for flt in attempt_list:
+                logger.debug("attempt filter: %s", flt)
                 vals, res = self._exec_get(object_name, flt, top, expand)
+                logger.debug(
+                    "attempt result: http=%s odata=%s rows=%s",
+                    res.get("http_code"),
+                    res.get("odata_error_code"),
+                    len(vals or []),
+                )
                 if vals:
                     # Если top<=1 — вернуть одиночный объект, иначе список
                     if top is not None and int(top) <= 1:
