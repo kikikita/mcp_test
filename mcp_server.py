@@ -11,13 +11,6 @@ import functools
 from datetime import datetime
 from typing import Annotated
 from pydantic import Field
-
-# Heuristic to detect if a string already looks like an OData filter
-FILTER_TOKEN_RE = re.compile(
-    r"\b(eq|ne|gt|lt|ge|le|and|or|not|substringof|startswith|endswith)\b",
-    re.IGNORECASE,
-)
-
 from mcp.server.fastmcp import FastMCP
 from odata_client import ODataClient, _is_guid
 from log_config import setup_logging
@@ -25,6 +18,13 @@ from field_filter import filter_fields, resolve_allowed_fields
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
+
+# Heuristic to detect if a string already looks like an OData filter
+FILTER_TOKEN_RE = re.compile(
+    r"\b(eq|ne|gt|lt|ge|le|and|or|not|substringof|startswith|endswith)\b",
+    re.IGNORECASE,
+)
 
 
 def _json_ready(x: Any) -> Any:
@@ -1011,6 +1011,10 @@ async def get_schema(
         - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
         - odata_error_message (str|null): Детальное сообщение об ошибке OData
         - fields (list|null): Список с именами свойств сущности (например: "Ref_Key", "Description", "Code")
+
+    Примеры использования:
+        - Получить схему сущности Catalog_Контрагенты: get_schema("Catalog_Контрагенты")
+        - Получить схему платежного поручения: get_schema("Document_ПлатежноеПоручение")
     """
     data = await asyncio.to_thread(_server.get_schema, object_name)
     return _json_ready(data)
@@ -1075,6 +1079,10 @@ async def resolve_entity_name(
         - http_message (str|null): Текстовое описание HTTP статуса
         - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
         - odata_error_message (str|null): Детальное сообщение об ошибке OData
+
+    Примеры использования:
+        - Найти каталог контрагентов: resolve_entity_name("Контрагенты", "каталог")
+        - Найти сущность платежного поручения в 1С: resolve_entity_name("Платежное поручение")
     """
     resolved = await asyncio.to_thread(_server.resolve_entity_name, user_entity, user_type)
     return _json_ready(
@@ -1122,6 +1130,10 @@ async def resolve_field_name(
         - http_message (str|null): Текстовое описание HTTP статуса
         - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
         - odata_error_message (str|null): Детальное сообщение об ошибке OData
+    
+    Примеры использования:
+        - Получить название поля, содержащего наименование контрагента: resolve_field_name("Catalog_Контрагенты", "Наименование")
+        - Узнать, в каком поле сущности платежного поручения хранится джата создания платежного поручения: resolve_field_name("Document_ПлатежноеПоручение", "Дата")
     """
     resolved = await asyncio.to_thread(_server.resolve_field_name, object_name, user_field)
     return _json_ready(
@@ -1189,7 +1201,8 @@ async def list_objects(
         - data (list[dict]|null): Список записей с данными объектов или None при ошибке
 
     Примеры использования:
-      - Получить первых 10 контрагентов: list_objects("Catalog_Контрагенты", top=10)
+      - Получить первых 10 контрагентов:
+        list_objects("Catalog_Контрагенты", top=10)
       - Найти контрагентов с наименованием "Поставщик": 
         list_objects("Catalog_Контрагенты", filters={"Description": "Поставщик"})
       - Получить платежные поручения с расширением данных контрагента:
@@ -1209,13 +1222,13 @@ async def find_object(
     )],
     filters: Annotated[Union[str, Dict[str, Any], List[str]], Field(
         description="Условия фильтрации для поиска записи. Может быть: "
-                   "1) Строка с выражением $filter (например: \"Code eq '00001'\") "
-                   "2) Словарь {поле: значение} (строковые значения автоматически экранируются) "
+                   "1) Строка с выражением $filter (например: \"Code eq 'БП-000001'\") "
+                   "2) Словарь поле: значение (строковые значения автоматически экранируются) "
                    "3) Список выражений, которые объединяются через AND",
         examples=[
-            "Code eq '00001'",
-            {"Code": "00001", "DeletionMark": False},
-            ["Code eq '00001'", "Description ne ''"]
+            "Code eq 'БП-000001'",
+            {"Code": "БП-000001", "DeletionMark": False},
+            ["Code eq 'БП-000001'", "Description ne ''"]
         ]
     )] = None,
     expand: Annotated[str, Field(
@@ -1246,6 +1259,14 @@ async def find_object(
         - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
         - odata_error_message (str|null): Детальное сообщение об ошибке OData
         - data (dict|null): Найденная запись в виде словаря или None, если ничего не найдено
+
+    Примеры использования:
+        - Найти контрагента с кодом "БП-000001": 
+          find_object("Catalog_Контрагенты", filters={"Code": "БП-000001"})
+        - Найти незаполненное платежное поручение: 
+          find_object("Document_ПлатежноеПоручение", filters={"Posted": False})
+        - Найти номенклатуру с расширением данных единицы измерения:
+          find_object("Catalog_Номенклатура", filters={"Description": "Техническая поддержка ПО"}, expand="ЕдиницаИзмерения")
     """
     data = await asyncio.to_thread(_server.find_object, object_name, filters, expand)
     return _json_ready(data)
@@ -1260,32 +1281,25 @@ async def create_object(
         max_length=256
     )],
     data: Annotated[Dict[str, Any], Field(
-        description="Данные для создания новой записи в виде словаря {поле: значение}. "
-                   "Поддерживает автоматическое разрешение ссылок при передаче специальных объектов "
-                   "для полей типа *_Key (например, вместо прямого указания Ref_Key можно передать "
-                   "объект с кодом или наименованием для автоматического поиска)",
+        description="Данные для создания новой записи в виде словаря поле: значение",
         examples=[
-            {"Description": "Новый контрагент", "Code": "00099", "ИНН": "1234567890"},
-            {"Date": "2024-01-15", "Number": "123", "Контрагент_Key": {"Code": "00001"}}
+            {"Description": "Новый контрагент", "Code": "БП-000001", "ИНН": "1234567890"},
+            {"Date": "2024-01-15", "Number": "00002", "Организация_Key": "00000000-0000-0000-0000-000000000000"}
         ]
     )],
     expand: Annotated[str, Field(
         description="Поля для расширения связанных данных (OData $expand). "
                    "Указываются через запятую",
-        examples=["Контрагент", "Склад,Номенклатура", "Владелец"]
+        examples=["Контрагент", "Склад,Номенклатура", "Организация"]
     )] = None,
 ) -> Dict[str, Any]:
     """
     Создает новую запись в указанном наборе сущностей с поддержкой автоматического 
     разрешения ссылочных полей и расширения связанных данных.
     
-    Функция автоматически обрабатывает ссылочные поля (с суффиксом _Key), позволяя 
-    передавать как прямые значения Ref_Key, так и объекты для поиска по коду или наименованию.
-    
     Args:
       object_name: Точное имя набора сущностей (EntitySet), полученное из resolve_entity_name()
-      data: Данные для создания записи. Поддерживает сложные объекты для автоматического 
-            разрешения ссылок на связанные объекты
+      data: Данные для создания записи.
       expand: Поля для включения связанных данных в ответ (разделитель - запятая)
     
     Returns:
@@ -1299,15 +1313,22 @@ async def create_object(
     
     Примеры использования:
       - Создать нового контрагента: 
-        create_object("Catalog_Контрагенты", {"Description": "ООО Ромашка", "Code": "00100"})
-      - Создать документ с автоматическим поиском контрагента по коду:
-        create_object("Document_ПлатежноеПоручение", {
-            "Date": "2024-01-15", 
-            "Контрагент_Key": {"Code": "00001"}
+        create_object("Catalog_Контрагенты", {"Description": "ООО Ромашка", "Code": "БП-00100"})
+      - Создать документ платежное поручение с известным контрагентом:
+        create_object("Document_ПлатежноеПоручение", {"Date": "2024-01-15", "Контрагент": "00000000-0000-0000-0000-000000000000"
         })
       - Создать номенклатуру с расширением данных единицы измерения:
         create_object("Catalog_Номенклатура", {"Description": "Новый товар"}, expand="ЕдиницаИзмерения")
     """
+    # # Функция для экранирования специальных символов в строковых значениях
+    # def escape_string_value(value: Any) -> Any:
+    #     if isinstance(value, str):
+    #         return value.replace("'", "''")
+    #     return value
+    
+    # # Экранируем все строковые значения в данных
+    # escaped_data = {key: escape_string_value(value) for key, value in data.items()}
+
     res = await asyncio.to_thread(_server.create_object, object_name, data, expand)
     return _json_ready(res)
 
@@ -1321,9 +1342,7 @@ async def update_object(
         max_length=256
     )],
     object_id: Annotated[Union[str, Dict[str, str]], Field(
-        description="Идентификатор объекта для обновления. Может быть: "
-                   "1) Ref_Key объекта в формате GUID (например: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee') "
-                   "2) Словарь с составным ключом для объектов с композитными идентификаторами",
+        description="Идентификатор объекта для обновления. Это может быть: Ref_Key объекта в формате GUID, либо словарь с составным ключом для объектов с композитными идентификаторами",
         examples=[
             "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
             {"Ref_Key": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
@@ -1331,33 +1350,27 @@ async def update_object(
         ]
     )],
     data: Annotated[Dict[str, Any], Field(
-        description="Поля для обновления в виде словаря {поле: новое_значение}. "
-                   "Поддерживает автоматическое разрешение ссылок при передаче специальных объектов "
-                   "для полей типа *_Key аналогично функции create_object",
+        description="Поля для обновления в виде словаря поле: новое_значение",
         examples=[
             {"Description": "Новое наименование", "ИНН": "0987654321"},
-            {"Контрагент_Key": {"Code": "00002"}, "Сумма": 1000.50}
+            {"Контрагент": "00000000-0000-0000-0000-000000000000", "Сумма": 1000.50}
         ]
     )],
     expand: Annotated[str, Field(
         description="Поля для расширения связанных данных (OData $expand). "
                    "Указываются через запятую",
-        examples=["Контрагент", "Склад,Номенклатура", "Владелец"]
+        examples=["Контрагент", "Склад,Номенклатура", "Организация"]
     )] = None,
 ) -> Dict[str, Any]:
     """
-    Обновляет существующую запись в указанном наборе сущностей по идентификатору 
-    с поддержкой автоматического разрешения ссылочных полей.
-    
-    Функция позволяет частично обновлять объекты, изменяя только указанные поля,
-    и поддерживает сложные операции с ссылками на связанные объекты.
+    Обновляет существующую запись в указанном наборе сущностей по идентификатору.
+    Функция позволяет частично обновлять объекты, изменяя только указанные поля.
     
     Args:
       object_name: Точное имя набора сущностей (EntitySet), полученное из resolve_entity_name()
       object_id: Идентификатор обновляемого объекта. Для объектов с составными ключами 
                 передается словарь с параметрами идентификации
-      data: Поля для обновления. Поддерживает сложные объекты для автоматического 
-            разрешения ссылок на связанные объекты
+      data: Поля для обновления
       expand: Поля для включения связанных данных в ответ (разделитель - запятая)
     
     Returns:
@@ -1369,16 +1382,12 @@ async def update_object(
         - data (dict|null): Обновленная запись с расширенными данными или None при ошибке
     
     Примеры использования:
-      - Обновить наименование контрагента: 
-        update_object("Catalog_Контрагенты", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 
-                     {"Description": "ООО Ромашка (новое название)"})
-      - Изменить контрагента в документе с автоматическим поиском:
-        update_object("Document_ПлатежноеПоручение", "bbbbbbbb-cccc-dddd-eeee-ffffffffffff", 
-                     {"Контрагент_Key": {"Code": "00002"}})
-      - Обновить несколько полей с расширением данных:
-        update_object("Catalog_Номенклатура", "cccccccc-dddd-eeee-ffff-gggggggggggg", 
-                     {"Description": "Новое описание", "Цена": 150.75}, 
-                     expand="ЕдиницаИзмерения")
+        - Обновить наименование контрагента: 
+          update_object("Catalog_Контрагенты", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", {"Description": "Новое описание"})
+        - Изменить контрагента в документе с автоматическим поиском:
+          update_object("Document_ПлатежноеПоручение", "bbbbbbbb-cccc-dddd-eeee-ffffffffffff", {"Контрагент_Key": "00000000-0000-0000-0000-000000000000"})
+        - Обновить несколько полей с расширением данных:
+          update_object("Catalog_Номенклатура", "cccccccc-dddd-eeee-ffff-gggggggggggg", {"Description": "Новое описание", "Цена": 150.75}, expand="ЕдиницаИзмерения")
     """
     res = await asyncio.to_thread(_server.update_object, object_name, object_id, data, expand)
     return _json_ready(res)
@@ -1393,13 +1402,11 @@ async def delete_object(
         max_length=256
     )],
     object_id: Annotated[Union[str, Dict[str, str]], Field(
-        description="Идентификатор объекта для удаления. Может быть: "
-                   "1) Ref_Key объекта в формате GUID (например: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee') "
-                   "2) Словарь с составным ключом для объектов с композитными идентификаторами",
+        description="Идентификатор объекта для удаления. Это может быть Ref_Key объекта в формате GUID либо словарь с составным ключом для объектов с композитными идентификаторами",
         examples=[
             "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
             {"Ref_Key": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
-            {"Code": "00001", "Вид": "Основной"}
+            {"Code": "БП-00001", "Вид": "Основной"}
         ]
     )],
     physical_delete: Annotated[bool, Field(
@@ -1411,8 +1418,7 @@ async def delete_object(
 ) -> Dict[str, Any]:
     """
     Выполняет пометку на удаление или физическое удаление записи из указанного набора сущностей.
-    
-    В системе 1С по умолчанию используется мягкое удаление (пометка на удаление), 
+    По умолчанию используется мягкое удаление (пометка на удаление), 
     которое позволяет восстановить объекты. Физическое удаление безвозвратно удаляет 
     данные из базы и должно использоваться с осторожностью.
     
@@ -1429,6 +1435,14 @@ async def delete_object(
         - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
         - odata_error_message (str|null): Детальное сообщение об ошибке OData
         - data (dict|null): Ответ сервера 1С или None при ошибке
+    
+    Примеры использования:
+        - Пометить контрагента на удаление: 
+          delete_object("Catalog_Контрагенты", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        - Физически удалить документ: 
+          delete_object("Document_ПлатежноеПоручение", "bbbbbbbb-cccc-dddd-eeee-ffffffffffff", True)
+        - Удалить объект с составным ключом: 
+          delete_object("Catalog_ДополнительныеРеквизиты", {"Code": "БП-00001", "Вид": "Основной"})
     """
     res = await asyncio.to_thread(_server.delete_object, object_name, object_id, physical_delete)
     return _json_ready(res)
@@ -1443,9 +1457,7 @@ async def post_document(
         max_length=256
     )],
     object_id: Annotated[Union[str, Dict[str, str]], Field(
-        description="Идентификатор документа для проведения. Может быть: "
-                   "1) Ref_Key документа в формате GUID (например: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee') "
-                   "2) Словарь с составным ключом для документов с идентификатором",
+        description="Идентификатор документа для проведения. Это может быть Ref_Key документа в формате GUID, либо словарь с составным ключом для документов с идентификатором",
         examples=[
             "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
             {"Ref_Key": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}
@@ -1454,10 +1466,7 @@ async def post_document(
 ) -> Dict[str, Any]:
     """
     Выполняет проведение документа в системе 1С через вызов метода OData /Post.
-    
-    Проведение документа - это критически важная операция, которая изменяет 
-    состояние бизнес-процессов: обновляет остатки, формирует движения регистров, 
-    влияет на учет и отчетность. Документ должен быть корректно заполнен перед проведением.
+    Документ должен быть корректно заполнен перед проведением.
     
     Args:
       object_name: Точное имя набора сущностей документа, полученное из resolve_entity_name()
@@ -1471,6 +1480,12 @@ async def post_document(
         - odata_error_message (str|null): Детальное сообщение об ошибке OData
         - last_id (str|null): Ref_Key документа или None при ошибке
         - data (dict|null): Ответ сервера 1С с результатом проведения или None при ошибке
+
+    Примеры использования:
+        - Провести платежное поручение: 
+        post_document("Document_ПлатежноеПоручение", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        - Провести документ поступления: 
+        post_document("Document_ПоступлениеТоваров", "bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
     """
     res = await asyncio.to_thread(_server.post_document, object_name, object_id)
     return _json_ready(res)
@@ -1485,9 +1500,7 @@ async def unpost_document(
         max_length=256
     )],
     object_id: Annotated[Union[str, Dict[str, str]], Field(
-        description="Идентификатор документа для отмены проведения. Может быть: "
-                   "1) Ref_Key документа в формате GUID (например: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee') "
-                   "2) Словарь с составным ключом для документов с идентификатором",
+        description="Идентификатор документа для отмены проведения. Это может быть Ref_Key документа в формате GUID, либо словарь с составным ключом для документов с идентификатором",
         examples=[
             "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
             {"Ref_Key": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}
@@ -1496,9 +1509,6 @@ async def unpost_document(
 ) -> Dict[str, Any]:
     """
     Выполняет отмену проведения документа в системе 1С через вызов метода OData /Unpost.
-    
-    Отмена проведения документа - это операция, которая обращает движения регистров, 
-    восстанавливает предыдущее состояние учетных данных и переводит документ в статус "Не проведен". 
     После отмены проведения документ снова становится доступным для редактирования.
     
     Args:
@@ -1513,6 +1523,12 @@ async def unpost_document(
         - odata_error_message (str|null): Детальное сообщение об ошибке OData
         - last_id (str|null): Ref_Key документа или None при ошибке
         - data (dict|null): Ответ сервера 1С с результатом отмены проведения или None при ошибке
+
+    Примеры использования:
+        - Отменить проведение платежного поручения: 
+        unpost_document("Document_ПлатежноеПоручение", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        - Отменить проведение документа поступления: 
+        unpost_document("Document_ПоступлениеТоваров", "bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
     """
     res = await asyncio.to_thread(_server.unpost_document, object_name, object_id)
     return _json_ready(res)
@@ -1533,13 +1549,13 @@ async def search_object(
     )],
     user_filters: Annotated[Optional[Union[str, Dict[str, Any], List[str]]], Field(
         description="Условия поиска. Допустимые варианты:" \
-                   "1) Строка: текст для поиска по основному полю. " \
+                   "1) Строка - текст для поиска по основному полю. " \
                    "Если содержит ключевые слова OData (eq, ge, и т.д.), будет " \
                    "использована как готовый `$filter`." \
-                   "2) Словарь: {поле: значение}. Строковые значения ищутся " \
+                   "2) Словарь поле: значение. Строковые значения ищутся " \
                    "прогрессивно, числа и даты передаются как есть." \
-                   "3) Список: набор готовых выражений, объединяемых через AND." \
-                   "4) None: возврат первых записей без фильтра",
+                   "3) Список - набор готовых выражений, объединяемых через AND." \
+                   "4) None - возврат первых записей без фильтра",
         examples=[
             "ООО Ромашка",
             {"Номер": "123", "СуммаДокумента": 1000},
@@ -1589,7 +1605,7 @@ async def search_object(
       - Найти контрагента по наименованию:
         search_object("справочник", "Контрагенты", "ООО Ромашка")
       - Найти документ по номеру:
-        search_object("документ", "Платежное поручение", {"Номер": "123"})
+        search_object("документ", "Платежное поручение", {"Number": "00003"})
       - Найти документы по дате и сумме:
         search_object(
             "документ", "Платежное поручение",
@@ -1622,14 +1638,14 @@ async def ensure_entity(
                    "2) Словарь с данными для создания новой записи "
                    "3) Строка для поиска по основному текстовому полю",
         examples=[
-            {"Code": "00001"},
+            {"Code": "БП-00001"},
             {"Description": "ООО Ромашка", "ИНН": "1234567890"},
             "ООО Ромашка"
         ]
     )],
     expand: Annotated[str, Field(
         description="Поля для расширения связанных данных (через запятую)",
-        examples=["Контрагент", "Склад,Номенклатура", "Владелец"]
+        examples=["Контрагент", "Склад,Номенклатура", "Организация"]
     )] = None
 ) -> Dict[str, Any]:
     """
@@ -1659,15 +1675,13 @@ async def ensure_entity(
     
     Примеры использования:
       - Найти или создать контрагента по коду: 
-        ensure_entity("справочник", "Контрагенты", {"Code": "00099"})
-      - Найти или создать по наименованию: 
-        ensure_entity("справочник", "Номенклатура", "Новый товар")
-      - Найти или создать с полными данными: 
         ensure_entity("справочник", "Контрагенты", {
             "Code": "00100", 
             "Description": "ООО Ромашка",
             "ИНН": "1234567890"
         })
+      - Найти или создать по наименованию: 
+        ensure_entity("справочник", "Номенклатура", "Новый товар")
     """
     res = await asyncio.to_thread(_server.ensure_entity, user_type, user_entity, data_or_filters, expand)
     return _json_ready(res)
@@ -1677,25 +1691,23 @@ async def ensure_entity(
 @mcp.tool()
 async def create_document(
     object_name: Annotated[str, Field(
-        description="Точное имя набора сущностей документа (Document_*) из OData сервиса 1С",
-        examples=["Document_ПоступлениеТоваровУслуг", "Document_РеализацияТоваровУслуг", "Document_ПлатежноеПоручение"],
+        description="Точное имя набора сущностей документа из OData сервиса 1С",
+        examples=["Document_ПоступлениеТоваровУслуг", "Document_ПлатежноеПоручение"],
         max_length=256
     )],
     header: Annotated[Dict[str, Any], Field(
-        description="Данные для шапки документа в виде словаря {поле: значение}. "
-                   "Поддерживает автоматическое разрешение ссылок для полей типа *_Key "
-                   "при передаче специальных объектов для поиска по коду или наименованию",
+        description="Данные для шапки документа в виде словаря поле: значение",
         examples=[
-            {"Date": "2024-01-15", "Number": "123", "Контрагент_Key": {"Code": "00001"}},
-            {"Date": "2024-01-16", "Number": "124", "Склад_Key": {"Description": "Основной склад"}}
+            {"Date": "2024-01-15", "Number": "123", "Контрагент": "xxxxxxxxxx-xxxx-xxxx-xxxx"},
+            {"Date": "2024-01-16", "Number": "124", "Ref_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx"}
         ]
     )],
     rows: Annotated[Dict[str, List[Dict[str, Any]]], Field(
         description="Данные для табличных частей документа. Ключ - точное имя табличной части, "
-                   "значение - список строк в виде словарей {поле: значение}",
+                   "значение - список строк в виде словарей поле: значение, где каждой строке соответсвует один словарь",
         examples=[
-            {"Товары": [{"Номенклатура_Key": {"Code": "00001"}, "Количество": 10, "Цена": 100.50}]},
-            {"Услуги": [{"Номенклатура_Key": {"Code": "00002"}, "Количество": 5, "Сумма": 250.75}]}
+            {"Товары": [{"Ref_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx", "Номенклатура_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx", "Количество": 10, "Цена": 100.50, "СтавкаНДС": "БезНДС"}]},
+            {"Услуги": [{"Ref_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx", "Номенклатура_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx", "Сумма": 250.75, "СтавкаНДС": "НДС20"}]}
         ]
     )] = None,
     post: Annotated[bool, Field(
@@ -1705,9 +1717,6 @@ async def create_document(
 ) -> Dict[str, Any]:
     """
     Создает документ с шапкой и табличными частями с возможностью автоматического проведения.
-    
-    Комплексная операция для создания полноценных документов 1С, включая обработку 
-    шапки документа, всех табличных частей и опционального проведения.
     
     Args:
       object_name: Точное имя набора сущностей документа, полученное из resolve_entity_name()
@@ -1731,11 +1740,11 @@ async def create_document(
     Примеры использования:
       - Создать документ поступления без проведения: 
         create_document("Document_ПоступлениеТоваровУслуг", 
-                       {"Date": "2024-01-15", "Контрагент_Key": {"Code": "00001"}},
-                       {"Товары": [{"Номенклатура_Key": {"Code": "00001"}, "Количество": 10}]})
+                       {"Date": "2024-01-15", "Контрагент": "xxxxxxxxxx-xxxx-xxxx-xxxx"},
+                       {"Товары": [{"Номенклатура_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx", "Количество": 10}]})
       - Создать и провести платежное поручение: 
         create_document("Document_ПлатежноеПоручение", 
-                       {"Date": "2024-01-15", "Number": "123", "Сумма": 1000},
+                       {"Ref_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx", "Date": "2024-01-15", "СуммаДокумента": 1000},
                        post=True)
     """
     res = await asyncio.to_thread(_server.create_document_with_rows, object_name, header, rows, post)
@@ -1757,8 +1766,7 @@ async def get_first_records(
     )],
     n: Annotated[int, Field(
         description="Количество записей для получения. Положительное целое число",
-        examples=[1, 3, 5],
-        ge=1
+        examples=[1, 3, 5]
     )] = 1
 ) -> Dict[str, Any]:
     """
@@ -1766,8 +1774,7 @@ async def get_first_records(
     Функция предназначена для получения примеров записей и их структуры. Для документов 
     "Document_ПоступлениеТоваровУслуг" автоматически исключает тяжелые табличные части 
     "Товары" и "Услуги" для оптимизации производительности.
-    Функция полезна для анализа структуры данных перед выполнением сложных запросов 
-    или для демонстрационных целей, когда не требуется полный объем информации.
+    Функция полезна для анализа структуры данных перед выполнением запросов для выполнения операций с записями (создание, изменение и т.д.).
     Для "Document_ПоступлениеТоваровУслуг" автоматически удаляются табличные части 
     "Товары" и "Услуги" для избежания передачи больших объемов данных
     
@@ -1782,6 +1789,14 @@ async def get_first_records(
         - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
         - odata_error_message (str|null): Детальное сообщение об ошибке OData
         - record (list): Список записей. Может быть пустым если данных нет или произошла ошибка
+    
+    Примеры использования:
+        - Получить пример контрагента: 
+        get_first_records("Catalog_Контрагенты", 1)
+        - Получить 3 примерa номенклатуры: 
+        get_first_records("Catalog_Номенклатура", 3)
+        - Получить пример документа поступления (без табличных частей): 
+        get_first_records("Document_ПоступлениеТоваровУслуг", 1)
     """
     def _sync() -> Dict[str, Any]:
         try:
@@ -1844,12 +1859,12 @@ async def find_record(
     )],
     field: Annotated[str, Field(
         description="Имя поля для фильтрации. Должно быть точным именем свойства OData",
-        examples=["Code", "Description", "Ref_Key", "Number"],
+        examples=["Code", "НаименованиеПолное", "Ref_Key", "ИНН"],
         max_length=256
     )],
     value: Annotated[str, Field(
         description="Значение для поиска по строгому равенству. Строка автоматически экранируется",
-        examples=["00001", "ООО Ромашка", "123", "2024-01-15"],
+        examples=["БП-00001", "ООО Ромашка", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "00000000"],
         max_length=256
     )]
 ) -> Dict[str, Any]:
@@ -1858,7 +1873,7 @@ async def find_record(
     Функция выполняет точный поиск по формату `field eq 'value'` с автоматическим 
     экранированием специальных символов в значении. Возвращает первую найденную запись 
     или пустой объект если совпадений не найдено.
-    Для нечеткого поиска или поиска по частичному совпадению используй функцию 
+    Для нечеткого поиска или поиска по частичному совпадению лучше использовать функцию 
     search_object с прогрессивной стратегией поиска.
     
     Args:
@@ -1876,11 +1891,11 @@ async def find_record(
     
     Примеры использования:
       - Найти контрагента по коду: 
-        find_record("Catalog_Контрагенты", "Code", "00001")
+        find_record("Catalog_Контрагенты", "Code", "БП-00001")
       - Найти номенклатуру по наименованию: 
         find_record("Catalog_Номенклатура", "Description", "Товар 1")
-      - Найти документ по номеру: 
-        find_record("Document_ПлатежноеПоручение", "Number", "123")
+      - Найти документ по Ref_Key: 
+        find_record("Document_ПлатежноеПоручение", "Ref_Key", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
     """
     def _sync() -> Dict[str, Any]:
         try:
@@ -1928,11 +1943,11 @@ async def create_record(
         max_length=256
     )],
     record: Annotated[Dict[str, Any], Field(
-        description="Данные для создания записи в виде словаря {поле: значение}. "
+        description="Данные для создания записи в виде словаря поле: значение. "
                    "Требуется точное соответствие структуре данных сущности",
         examples=[
-            {"Code": "00100", "Description": "Новый контрагент"},
-            {"Number": "123", "Date": "2024-01-15", "Сумма": 1000.50}
+            {"Code": "БП-00100", "Description": "Новый контрагент"},
+            {"Number": "123456", "Date": "2024-01-15", "Сумма": 1000.50}
         ]
     )]
 ) -> Dict[str, Any]:
@@ -1960,6 +1975,16 @@ async def create_record(
         - odata_error_message (str|null): Детальное сообщение об ошибке OData
         - record (dict|null): Созданная запись или None при ошибке
         - error (str|null): Дополнительное сообщение об ошибке
+    
+    Примеры использования:
+        - Создать контрагента с готовыми данными: 
+        create_record("Catalog_Контрагенты", {"Code": "БП-00100", "Description": "Прочие"})
+        - Создать документ с прямыми ссылками: 
+        create_record("Document_ПлатежноеПоручение", {
+            "Number": "123456", 
+            "Date": "2024-01-15T00:00:00",
+            "Контрагент": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        })
     """
     def _sync() -> Dict[str, Any]:
         try:
@@ -2002,7 +2027,7 @@ async def create_record(
 async def post_record(
     entity_name: Annotated[str, Field(
         description="Точное имя набора сущностей документа (Document_*) из OData сервиса 1С",
-        examples=["Document_ПлатежноеПоручение", "Document_ПоступлениеТоваров", "Document_РеализацияТоваров"],
+        examples=["Document_ПлатежноеПоручение", "Document_ПоступлениеТоваровУслуг"],
         max_length=256
     )],
     ref_key: Annotated[str, Field(
@@ -2014,9 +2039,6 @@ async def post_record(
     """
     Проводит документ по его Ref_Key через вызов метода OData /Post.
     Упрощенный алиас для функции post_document когда известно точное имя сущности.
-    Проведение документа - это операция, которая подтверждает документ и выполняет 
-    все связанные бизнес-процессы: обновляет остатки, формирует движения регистров, 
-    влияет на учет и отчетность.
     Особенности:
       - Упрощенный интерфейс по сравнению с post_document
       - Требует точного знания имени сущности документа
@@ -2037,6 +2059,12 @@ async def post_record(
         - message (str): Текстовое описание результата операции или сообщение об ошибке
         - ref_key (str): Ref_Key проведенного документа (только если документ успешно проведен)
         - entity (str): Имя сущности документа (только если документ успешно проведен)
+    
+    Примеры использования:
+        - Провести платежное поручение: 
+        post_record("Document_ПлатежноеПоручение", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        - Провести документ поступления: 
+        post_record("Document_ПоступлениеТоваровУслуг", "bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
     """
     def _sync() -> Dict[str, Any]:
         try:
@@ -2075,10 +2103,10 @@ async def add_product_service(
         max_length=256
     )],
     waybill: Annotated[Dict[str, Any], Field(
-        description="Словарь документа-накладной в процессе формирования. "
-                   "Должен содержать соответствующую табличную часть",
+        description="Словарь существующего документа-накладной, в который добавляются товары либо услуги. "
+                   "Должен содержать соответствующую табличную часть, которая может быть пустой (в виде пустых списков)",
         examples=[
-            {"Number": "123", "Date": "2024-01-15", "Товары": [], "Услуги": []},
+            {"Number": "123456", "Date": "2024-01-15T23:59:59", "Товары": [], "Услуги": []},
             {"Ref_Key": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "Товары": [{"Номенклатура_Key": "..."}]}
         ]
     )],
@@ -2091,13 +2119,13 @@ async def add_product_service(
     )]
 ) -> Dict[str, Any]:
     """
-    Добавляет товар или услугу в словарь документа-накладной в памяти (без запросов к 1С).
-    Вспомогательная функция для формирования сложных документов с табличными частями.
+    Добавляет товар или услугу в словарь документа-накладной.
+    Вспомогательная функция для добпавления в накладную табличной части.
     
     Args:
       type_of_good: Тип добавляемого элемента - 'Товары' для товаров или 'Услуги' для услуг
-      waybill: Словарь документа в процессе формирования. Должен содержать соответствующую 
-              табличную часть как список или быть готовым к ее созданию
+      waybill: Словарь документа-накладной. Должен содержать соответствующую 
+              табличную часть как список (может быть пустым, но обязательно должен быть записан в ключи "Товары" и "Услуги")
       product_or_service: Данные строки табличной части для добавления
     
     Returns:
@@ -2108,9 +2136,9 @@ async def add_product_service(
         - waybill (dict|null): Обновленный словарь документа с добавленной строкой
     
     Примеры использования:
-      - Добавить товар в накладную: 
+       - Добавить товар в накладную: 
         add_product_service("Товары", waybill_dict, {"Номенклатура_Key": "...", "Количество": 10})
-      - Добавить услугу в документ: 
+       - Добавить услугу в документ: 
         add_product_service("Услуги", waybill_dict, {"Номенклатура_Key": "...", "Сумма": 1000})
     """
     def _sync() -> Dict[str, Any]:
@@ -2135,12 +2163,12 @@ async def add_product_service(
 async def get_records_by_date_range(
     entity_name: Annotated[str, Field(
         description="Точное имя набора сущностей (EntitySet) из OData сервиса 1С",
-        examples=["Document_ПлатежноеПоручение", "Document_ПоступлениеТоваров", "InformationRegister_КурсыВалют"],
+        examples=["Document_ПлатежноеПоручение", "Document_ПоступлениеТоваровУслуг"],
         max_length=256
     )],
     date_field: Annotated[str, Field(
         description="Имя поля с датой для фильтрации по диапазону",
-        examples=["Date", "Период", "ДатаВвода", "ДатаДокумента"],
+        examples=["Date", "Дата", "ДатаСоздания"],
         max_length=256
     )] = "Date",
     start_date: Annotated[datetime, Field(
@@ -2152,18 +2180,17 @@ async def get_records_by_date_range(
         examples=["2024-01-31", "2024-01-15T23:59:59"]
     )] = None,
     additional_filters: Annotated[Dict[str, Any], Field(
-        description="Дополнительные фильтры в виде словаря {поле: значение}. "
+        description="Дополнительные фильтры в виде словаря поле: значение. "
                    "Поддерживаются строковые, булевые и числовые значения",
         examples=[
             {"Posted": True, "Контрагент_Key": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
-            {"DeletionMark": False, "Code": "00001"}
+            {"DeletionMark": False, "Code": "БП-00001"}
         ]
     )] = None,
     top: Annotated[int, Field(
         description="Ограничение количества возвращаемых записей. "
                    "Если не указано, возвращаются все записи соответствующие фильтрам",
-        examples=[10, 50, 100],
-        ge=1
+        examples=[5, 10, 50],
     )] = None
 ) -> Dict[str, Any]:
     """
@@ -2193,10 +2220,10 @@ async def get_records_by_date_range(
     Примеры использования:
       - Получить платежные поручения за январь 2024: 
         get_records_by_date_range("Document_ПлатежноеПоручение", "Date", 
-                                 datetime(2024, 1, 1), datetime(2024, 1, 31))
+                                 "2024-01-01T00:00:00", "2024-01-31T00:00:00")
       - Получить проведенные документы поступления за период: 
-        get_records_by_date_range("Document_ПоступлениеТоваров", "Date",
-                                 datetime(2024, 1, 1), datetime(2024, 1, 15),
+        get_records_by_date_range("Document_ПоступлениеТоваровУслуг", "Date",
+                                 "2019-03-31T23:59:59", "2019-04-12T23:59:59",
                                  {"Posted": True})
     """
     def _sync() -> Dict[str, Any]:
@@ -2270,20 +2297,20 @@ async def get_records_with_expand(
     expand_fields: Annotated[List[str], Field(
         description="Список имен связанных свойств для расширения (OData $expand). "
                    "Указываются имена свойств через запятую",
-        examples=[["Контрагент"], ["Склад", "Номенклатура"], ["Владелец", "Подразделение"]]
+        examples=[["Контрагент"], ["Склад", "Номенклатура"]]
     )],
     filters: Annotated[Dict[str, Any], Field(
-        description="Дополнительные фильтры в виде словаря {поле: значение}. "
+        description="Дополнительные фильтры в виде словаря поле: значение. "
                    "Поддерживаются строковые, булевые и числовые значения. "
                    "Все условия объединяются через логическое AND",
         examples=[
             {"Posted": True, "DeletionMark": False},
-            {"Code": "00001", "Description": "Поставщик"}
+            {"Code": "БП-00001", "Description": "Прочие"}
         ]
     )] = None,
     order_by: Annotated[str, Field(
         description="Имя поля для сортировки результатов. "
-                   "Если не указано, используется порядок по умолчанию сервера",
+                   "Если не указано, используется порядок по умолчанию 1С",
         examples=["Date", "Number", "Code", "Description"]
     )] = None,
     desc: Annotated[bool, Field(
@@ -2322,9 +2349,9 @@ async def get_records_with_expand(
       - Получить платежные поручения с данными контрагента: 
         get_records_with_expand("Document_ПлатежноеПоручение", ["Контрагент"])
       - Получить номенклатуру с расширением единицы измерения и группы: 
-        get_records_with_expand("Catalog_Номенклатура", ["ЕдиницаИзмерения", "Группа"])
+        get_records_with_expand("Catalog_Номенклатура", ["ЕдиницаИзмерения", "НоменклатурнаяГруппа"])
       - Получить проведенные документы с сортировкой по дате: 
-        get_records_with_expand("Document_ПоступлениеТоваров", ["Контрагент", "Склад"],
+        get_records_with_expand("Document_ПоступлениеТоваровУслуг", ["Контрагент", "Склад"],
                                {"Posted": True}, "Date", True)
     """
     def _sync() -> Dict[str, Any]:
@@ -2389,12 +2416,12 @@ async def get_aggregated_data(
     )],
     group_by_field: Annotated[str, Field(
         description="Имя поля для группировки данных. Определяет категории для агрегации",
-        examples=["Контрагент_Key", "Склад_Key", "Номенклатура_Key", "Валюта_Key"],
+        examples=["Контрагент_Key", "Склад_Key", "Организация_Key"],
         max_length=256
     )],
     aggregate_field: Annotated[str, Field(
         description="Имя поля для агрегации. Должно содержать числовые значения",
-        examples=["Сумма", "Количество", "Цена", "Курс"],
+        examples=["Сумма", "СуммаНДС", "Цена"],
         max_length=256
     )],
     aggregate_func: Annotated[str, Field(
@@ -2404,7 +2431,7 @@ async def get_aggregated_data(
     )] = "sum",
     date_field: Annotated[str, Field(
         description="Имя поля с датой для фильтрации по диапазону",
-        examples=["Date", "Период", "ДатаДокумента", "ДатаВвода"],
+        examples=["Date", "Дата"],
         max_length=256
     )] = "Date",
     start_date: Annotated[datetime, Field(
@@ -2438,12 +2465,13 @@ async def get_aggregated_data(
         - error (str|null): Сообщение об ошибке если операция не удалась
     
     Примеры использования:
-      - Получить сумму продаж по контрагентам за январь: 
-        get_aggregated_data("Document_РеализацияТоваров", "Контрагент_Key", "Сумма", "sum", 
-                           "Date", datetime(2024, 1, 1), datetime(2024, 1, 31))
-      - Получить среднюю цену по номенклатуре: 
-        get_aggregated_data("Document_ПоступлениеТоваров", "Номенклатура_Key", "Цена", "avg")
-      - Получить количество документов по складам: 
+      - Получить общую сумму документов поступления по контрагентам за январь: 
+        get_aggregated_data("Document_ПоступлениеТоваровУслуг", "Контрагент_Key", "СуммаДокумента", "sum", 
+                           "Date", "2024-01-01T00:00:00", "2024-01-01T23:59:59")
+      - Получить среднюю сумму НДС по организациям: 
+        get_aggregated_data("Document_ПоступлениеТоваровУслуг", "Организация_Key", "СуммаНДС", "avg")
+      - Получить количество документов по контрагентам: 
+        get_aggregated_data("Document_ПоступлениеТоваровУслуг", "Контрагент_Key", "Ref_Key", "count")
     """
     def _sync() -> Dict[str, Any]:
         try:
