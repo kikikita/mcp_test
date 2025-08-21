@@ -21,8 +21,7 @@ def test_progressive_string_field():
     attempts = srv._progressive_attempts_for_string("Entity", "Description", "Тест", False)
     assert attempts == [
         "Description eq 'Тест'",
-        "substringof(Description, 'Тест')",
-        "substringof(tolower(Description), 'тест')",
+        "substringof('Тест', Description)",
     ]
 
 
@@ -32,6 +31,5 @@ def test_progressive_dict_string_field():
     attempts = srv._progressive_attempts_for_dict("Entity", {"Description": "Тест"}, False)
     assert attempts == [
         "Description eq 'Тест'",
-        "substringof(Description, 'Тест')",
-        "substringof(tolower(Description), 'тест')",
+        "substringof('Тест', Description)",
     ]
