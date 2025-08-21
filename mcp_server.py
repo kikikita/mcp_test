@@ -303,11 +303,14 @@ class MCPServer:
         if not schema:
             return None
         props = schema.get("properties", {})
+        nav_props = schema.get("navigation_properties", {})
         allowed = resolve_allowed_fields(object_name)
         if allowed:
             props = {k: v for k, v in props.items() if k in allowed}
+            nav_props = {k: v for k, v in nav_props.items() if k in allowed}
         schema = dict(schema)
         schema["properties"] = props
+        schema["navigation_properties"] = nav_props
         return schema
 
     def resolve_entity_name(self, user_entity: str, user_type: Optional[str] = None) -> Optional[str]:
@@ -431,10 +434,36 @@ class MCPServer:
                 out[fld] = v
         return out
 
+    def _validate_expand(self, object_name: str, expand: Optional[str]) -> Optional[str]:
+        if not expand:
+            return None
+        schema = self.get_entity_schema(object_name) or {}
+        nav_props = schema.get("navigation_properties") or {}
+        nav_names = set(nav_props.keys()) if isinstance(nav_props, dict) else set(nav_props or [])
+        valid: List[str] = []
+        for segment in expand.split(","):
+            seg = segment.strip()
+            if not seg:
+                continue
+            root = seg.split("/", 1)[0]
+            resolved = self.resolve_field_name(object_name, root, fallback=False) or root
+            if resolved in nav_names:
+                if resolved != root:
+                    seg = seg.replace(root, resolved, 1)
+                valid.append(seg)
+            else:
+                logger.warning(
+                    "Navigation property '%s' not found for %s; skipping from expand",
+                    root,
+                    object_name,
+                )
+        return ",".join(valid) if valid else None
+
     def _exec_get(
         self, object_name: str, flt: Optional[str], top: Optional[int], expand: Optional[str]
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         builder = getattr(self.client, object_name)
+        expand = self._validate_expand(object_name, expand)
         if expand:
             builder = builder.expand(expand)
         if top is not None:
@@ -575,6 +604,7 @@ class MCPServer:
         expand: Optional[str] = None,
     ) -> Dict[str, Any]:
         builder = getattr(self.client, object_name)
+        expand = self._validate_expand(object_name, expand)
         if expand:
             builder = builder.expand(expand)
         if top is not None:
@@ -608,6 +638,7 @@ class MCPServer:
         expand: Optional[str] = None,
     ) -> Dict[str, Any]:
         builder = getattr(self.client, object_name)
+        expand = self._validate_expand(object_name, expand)
         if expand:
             builder = builder.expand(expand)
         if filters:
@@ -643,6 +674,7 @@ class MCPServer:
         expand: Optional[str] = None,
     ) -> Dict[str, Any]:
         builder = getattr(self.client, object_name)
+        expand = self._validate_expand(object_name, expand)
         if expand:
             builder = builder.expand(expand)
         resolved = self._resolve_refs_in_payload(object_name, data or {})
@@ -672,6 +704,7 @@ class MCPServer:
         expand: Optional[str] = None,
     ) -> Dict[str, Any]:
         builder = getattr(self.client, object_name).id(object_id)
+        expand = self._validate_expand(object_name, expand)
         if expand:
             builder = builder.expand(expand)
         resolved = self._resolve_refs_in_payload(object_name, data or {})
@@ -2360,8 +2393,9 @@ async def get_records_with_expand(
     def _sync() -> Dict[str, Any]:
         try:
             entity = getattr(_server.client, entity_name)
-            
-            query = entity.expand(",".join(expand_fields))
+
+            exp = _server._validate_expand(entity_name, ",".join(expand_fields))
+            query = entity.expand(exp) if exp else entity
             
             if filters:
                 filter_parts = []
