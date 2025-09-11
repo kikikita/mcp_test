@@ -106,9 +106,12 @@ async def chat_fn(message: str, history: list, file: Optional[str]):
 
     url_agent = "http://localhost:9080/query"
     async with aiohttp.ClientSession() as session:
-        async with session.post(url_agent, json={"messages": trimmed_history, 'system': SYSTEM_PROMPT}) as response:
-            response = await response.json()
-    return response.get("content")
+        async with session.post(url_agent, json={"messages": trimmed_history, 'system': SYSTEM_PROMPT}) as resp:
+            response = await resp.json()
+    if isinstance(response, list):
+        logger.error("Unexpected list response from orchestrator: %s", response)
+        return "Ошибка: некорректный ответ от сервера"
+    return response.get("content", "")
 
 
 def file_badge(file_obj: Optional[gr.File]):
