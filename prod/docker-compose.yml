@@ -1,4 +1,4 @@
-version: '3.8'
+version: '3.3'
 
 services:
   # 0. Postgres database for instructions
@@ -13,12 +13,6 @@ services:
       - instructions_data:/var/lib/postgresql/data
     networks:
       - mcp_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
 
   # 1. MCP сервис (единая шина)
   mcp_service:
@@ -31,8 +25,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+psycopg2://mcp_user:mcp_pass@instructions_db:5432/mcp_howto
     depends_on:
-      instructions_db:
-        condition: service_healthy
+      - instructions_db
     networks:
       - mcp_network
 
