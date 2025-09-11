@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import os
-import sys
 from logging.config import fileConfig
-from db.database import Base
-from db import models
+
+from src.db.database import Base  # noqa: E402
+from src.db import models  # noqa: E402
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
@@ -23,8 +23,6 @@ config.set_main_option(
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
-
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../../src"))
 
 target_metadata = Base.metadata
 

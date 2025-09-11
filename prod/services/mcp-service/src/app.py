@@ -11,8 +11,8 @@ from datetime import datetime
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
-from db.database import get_session
-from db.repository import InstructionRepository
+from src.db.database import get_session
+from src.db.repository import InstructionRepository
 
 import aiohttp
 from fastapi import FastAPI, HTTPException
