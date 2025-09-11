@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 from logging.config import fileConfig
 
-from src.db.database import Base  # noqa: E402
-from src.db import models  # noqa: E402
+from src.db.database import Base
+from src.db import models
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
