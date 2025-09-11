@@ -628,7 +628,7 @@ class ODataClient:
 
             root = ET.fromstring(metadata["raw"])
 
-            # Map EntityType -> properties and navigation properties
+            # Map EntityType -> properties
             etype_props: Dict[str, Dict[str, Any]] = {}
             for node in root.iter():
                 if node.tag.endswith("EntityType"):
@@ -636,7 +636,6 @@ class ODataClient:
                     if not et_name:
                         continue
                     props: Dict[str, Dict[str, Any]] = {}
-                    nav_props: Dict[str, Dict[str, Any]] = {}
                     for child in list(node):
                         if child.tag.endswith("Property"):
                             pname = child.get("Name")
@@ -644,15 +643,7 @@ class ODataClient:
                             nullable = (child.get("Nullable", "true").lower() == "true")
                             if pname:
                                 props[pname] = {"type": ptype, "nullable": nullable}
-                        elif child.tag.endswith("NavigationProperty"):
-                            pname = child.get("Name")
-                            ptype = child.get("Type")
-                            if pname:
-                                nav_props[pname] = {"type": ptype}
-                    etype_props[et_name] = {
-                        "properties": props,
-                        "navigation_properties": nav_props,
-                    }
+                    etype_props[et_name] = props
 
             # Read EntitySet(s) from any EntityContainer
             entity_sets: Dict[str, Dict[str, Any]] = {}
@@ -665,11 +656,9 @@ class ODataClient:
                             if not name:
                                 continue
                             et_short = (etype or "").split(".")[-1]
-                            et_info = etype_props.get(et_short, {})
                             entity_sets[name] = {
                                 "entity_type": etype,
-                                "properties": et_info.get("properties", {}),
-                                "navigation_properties": et_info.get("navigation_properties", {}),
+                                "properties": etype_props.get(et_short, {}),
                             }
 
             if entity_sets:

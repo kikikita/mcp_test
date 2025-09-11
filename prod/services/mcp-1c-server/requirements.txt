@@ -1,0 +1,34 @@
+# Core MCP dependencies
+mcp>=1.0.0
+fastmcp>=0.2.0
+
+# HTTP and async dependencies
+httpx>=0.25.0
+aiohttp>=3.8.0
+asyncio-throttle>=1.0.0
+
+# Data validation and parsing
+pydantic>=2.0.0
+pydantic[email]>=2.0.0
+
+# Environment and configuration
+python-dotenv>=1.0.0
+
+# Logging
+structlog>=23.0.0
+
+# Date and time handling
+python-dateutil>=2.8.0
+
+# JSON handling
+orjson>=3.9.0
+
+# Type checking utilities
+typing-extensions>=4.7.0
+
+# OData specific dependencies
+requests>=2.31.0
+urllib3>=2.0.0
+
+# Optional: for better async performance
+uvloop>=0.17.0; sys_platform != "win32"

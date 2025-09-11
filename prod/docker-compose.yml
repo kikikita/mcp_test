@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  # 1. MCP сервис (единая шина)
+  mcp_service:
+    build: ./services/mcp-service
+    container_name: mcp_service
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "9001:9001"
+    networks:
+      - mcp_network
+
+  # 2. MCP 1C Server
+  mcp_1c_server:
+    build: ./services/mcp-1c-server
+    network_mode: host
+    container_name: mcp_1c_server
+    environment:
+      - MCP_1C_BASE=${MCP_1C_BASE}
+      - ONEC_USERNAME=${ONEC_USERNAME}
+      - ONEC_PASSWORD=${ONEC_PASSWORD}
+      - ONEC_VERIFY_SSL=${ONEC_VERIFY_SSL:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./services/mcp-1c-server/logs:/app/logs
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      - mcp_service
+    restart: unless-stopped
+
+  # 3. PDF Service
+  pdf_service:
+    build: ./services/pdf-service
+    container_name: pdf_service
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "4300:4300"
+    volumes:
+      - ./services/pdf-service/uploads:/app/uploads
+      - ./services/pdf-service/logs:/app/logs
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+    networks:
+      - mcp_network
+
+  # 4. Оркестратор
+  orchestrator:
+    build: ./services/orchestrator
+    container_name: orchestrator
+    depends_on:
+      - mcp_service
+      - mcp_1c_server
+      - pdf_service
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "9080:9080"
+    networks:
+      - mcp_network
+
+networks:
+  mcp_network:
+    driver: bridge
