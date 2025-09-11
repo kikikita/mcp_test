@@ -3,17 +3,10 @@
 from __future__ import annotations
 
 import os
-import sys
 from logging.config import fileConfig
-from pathlib import Path
 
-# Ensure the service's ``src`` package is importable when Alembic loads this module.
-# ``env.py`` lives in ``app/db/migrations``; go up three directories to the service
-# root and then append ``src`` to ``sys.path``.
-sys.path.append(str(Path(__file__).resolve().parents[3] / "src"))
-
-from db.database import Base  # noqa: E402
-from db import models  # noqa: E402
+from src.db.database import Base  # noqa: E402
+from src.db import models  # noqa: E402
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
