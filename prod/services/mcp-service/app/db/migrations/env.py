@@ -5,19 +5,26 @@ from __future__ import annotations
 import os
 import sys
 from logging.config import fileConfig
+from db.database import Base
+from db import models
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 config = context.config
 
+config.set_main_option(
+    "sqlalchemy.url",
+    os.getenv(
+        "DATABASE_URL",
+        "postgresql+psycopg2://mcp_user:mcp_pass@instructions_db:5432/mcp_howto",
+    ),
+)
+
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../src"))
-
-from db.database import Base  # noqa: E402
-from db import models  # noqa: F401,E402
 
 target_metadata = Base.metadata
 
@@ -53,4 +60,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
-
