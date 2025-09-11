@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from fastmcp import Client as MCP
 from fastmcp.client.transports import SSETransport
 from openai import AsyncOpenAI, APIStatusError, APIConnectionError
@@ -50,7 +51,8 @@ class AIAgent:
         self._mcp_url = mcp_service_url.rstrip("/")
         self.session_id = session_id
         self.url = llm_url
-        self.llm = AsyncOpenAI(base_url=self.url, api_key="dummy")
+        api_key = os.getenv("LLM_API_KEY", "empty")
+        self.llm = AsyncOpenAI(base_url=self.url, api_key=api_key)
         self.model = model
         self.messages = messages
         self.tools: List[Dict[str, Any]] = []  # список в формате OpenAI
@@ -120,16 +122,21 @@ class AIAgent:
                 # Библиотека openai оборачивает httpx.HTTPStatusError в свой класс
                 print(f"Ошибка от API LLM: статус {e.status_code}, ответ: {e.response.text}")
                 if e.status_code == 500:
-                    return "Ошибка: LLM-сервер вернул внутреннюю ошибку (500).", self.messages
-                # Здесь можно добавить обработку других кодов, например, 429 (rate limit)
-                # или просто прервать выполнение.
-                return "Ошибка: Не удалось получить ответ от LLM.", self.messages
+                    error_msg = "Ошибка: LLM-сервер вернул внутреннюю ошибку (500)."
+                else:
+                    # Здесь можно добавить обработку других кодов, например, 429 (rate limit)
+                    # или просто прервать выполнение.
+                    error_msg = "Ошибка: Не удалось получить ответ от LLM."
+                self.messages.append({"role": "assistant", "content": error_msg})
+                return self.messages
 
             except APIConnectionError as e:
                 # Ошибка соединения (не удалось подключиться к серверу LLM)
                 # Оборачивает httpx.ConnectError
                 print(f"Ошибка подключения к LLM: {e.__cause__}")
-                return "Ошибка: Не удалось подключиться к LLM-серверу.", self.messages
+                error_msg = "Ошибка: Не удалось подключиться к LLM-серверу."
+                self.messages.append({"role": "assistant", "content": error_msg})
+                return self.messages
 
             except Exception as e:
                 # Этот блок теперь будет ловить другие, более редкие ошибки.
@@ -143,7 +150,9 @@ class AIAgent:
                     # Если последний ответ не от ассистента, логика может не сработать.
                     # Добавим защиту.
                     print("Не удалось применить логику исправления, последнее сообщение не от ассистента.")
-                    return "Ошибка: Не удалось обработать ответ LLM.", self.messages
+                    error_msg = "Ошибка: Не удалось обработать ответ LLM."
+                    self.messages.append({"role": "assistant", "content": error_msg})
+                    return self.messages
 
                 last = self.messages.pop()
                 tool_call_id = "fault"
