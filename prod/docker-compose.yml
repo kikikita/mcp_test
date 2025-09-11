@@ -1,6 +1,25 @@
 version: '3.8'
 
 services:
+  # 0. Postgres database for instructions
+  instructions_db:
+    image: postgres:16
+    container_name: instructions_db
+    environment:
+      - POSTGRES_USER=mcp_user
+      - POSTGRES_PASSWORD=mcp_pass
+      - POSTGRES_DB=mcp_howto
+    volumes:
+      - instructions_data:/var/lib/postgresql/data
+    networks:
+      - mcp_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
   # 1. MCP сервис (единая шина)
   mcp_service:
     build: ./services/mcp-service
@@ -9,6 +28,11 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "9001:9001"
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://mcp_user:mcp_pass@instructions_db:5432/mcp_howto
+    depends_on:
+      instructions_db:
+        condition: service_healthy
     networks:
       - mcp_network
 
@@ -64,3 +88,6 @@ services:
 networks:
   mcp_network:
     driver: bridge
+
+volumes:
+  instructions_data:
