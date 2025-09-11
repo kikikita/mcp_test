@@ -1,7 +1,0 @@
-
-{{ define "ai-platform.common-environment-values" }}
-{{ end }}
-
-
-
-

@@ -1,6 +1,0 @@
-containerPull:
-  registry: gitlab.prosto.aib.pro:5050/aiagent/aibia/ds
-  pullSecret: regcred
-
-
-

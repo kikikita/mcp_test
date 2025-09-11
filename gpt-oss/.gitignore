@@ -1,7 +1,0 @@
-# Logs
-logs
-*.log
-__pycache__/
-*.sh
-*.out
-*.zip
