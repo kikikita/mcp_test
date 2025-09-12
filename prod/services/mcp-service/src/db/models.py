@@ -10,7 +10,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TIMESTAMP
 from sqlalchemy.sql import text
 
-from .database import Base
+from .engine import Base
 
 
 class Instruction(Base):

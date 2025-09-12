@@ -11,7 +11,7 @@ from datetime import datetime
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
-from src.db.database import get_session
+from src.db.engine import get_session
 from src.db.repository import InstructionRepository
 
 import aiohttp
@@ -240,7 +240,7 @@ async def get_tools():
 @app.get("/instructions/{entity}/{action}", response_model=InstructionOut)
 def get_instruction(entity: str, action: str, session: Session = Depends(get_session)):
     repo = InstructionRepository(session)
-    instr = repo.get(entity, action)
+    instr = repo.get_instruction(entity, action)
     if not instr:
         raise HTTPException(status_code=404, detail="Instruction not found")
     return instr
