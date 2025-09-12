@@ -30,5 +30,8 @@ typing-extensions>=4.7.0
 requests>=2.31.0
 urllib3>=2.0.0
 
+# JSON schema validation
+jsonschema>=4.0.0
+
 # Optional: for better async performance
 uvloop>=0.17.0; sys_platform != "win32"
