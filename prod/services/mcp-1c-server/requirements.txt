@@ -32,3 +32,7 @@ urllib3>=2.0.0
 
 # Optional: for better async performance
 uvloop>=0.17.0; sys_platform != "win32"
+# Database and migrations
+SQLAlchemy
+psycopg2-binary
+alembic

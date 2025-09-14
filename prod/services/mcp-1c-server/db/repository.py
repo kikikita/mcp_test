@@ -1,4 +1,4 @@
-"""Repository layer for working with instructions."""
+"""Repository layer for working with instructions in mcp-1c-server."""
 
 from sqlalchemy.orm import Session
 
@@ -24,4 +24,3 @@ class InstructionRepository:
         self.session.commit()
         self.session.refresh(instr)
         return instr
-

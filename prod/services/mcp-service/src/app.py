@@ -6,13 +6,6 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 import os
-from datetime import datetime
-
-from fastapi import Depends
-from sqlalchemy.orm import Session
-
-from src.db.database import get_session
-from src.db.repository import InstructionRepository
 
 import aiohttp
 from fastapi import FastAPI, HTTPException
@@ -214,36 +207,11 @@ class CallToolRequest(BaseModel):
     parameters: Dict[str, Any] = {}
 
 
-class InstructionOut(BaseModel):
-    id: int
-    entity: str
-    action: str
-    descr: str
-    steps: Dict[str, Any]
-    arg_schema: Optional[Dict[str, Any]] = None
-    field_map: Optional[Dict[str, Any]] = None
-    tags: List[str] = []
-    updated_at: datetime
-    updated_by: Optional[str] = None
-
-    class Config:
-        orm_mode = True
-
-
 @app.get("/tools")
 async def get_tools():
     """Возвращает плоский список всех доступных инструментов от всех серверов."""
     tools = await aggregator.get_all_tools()
     return {"status": "success", "tools": tools}
-
-
-@app.get("/instructions/{entity}/{action}", response_model=InstructionOut)
-def get_instruction(entity: str, action: str, session: Session = Depends(get_session)):
-    repo = InstructionRepository(session)
-    instr = repo.get(entity, action)
-    if not instr:
-        raise HTTPException(status_code=404, detail="Instruction not found")
-    return instr
 
 
 @app.post("/call_tool", response_model=ToolCallResponse)

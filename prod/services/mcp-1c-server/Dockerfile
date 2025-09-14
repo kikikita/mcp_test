@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем код приложения
 COPY . .
 
+# Ensure Python can import local packages
+ENV PYTHONPATH=/app
+
 # Создаем директорию для логов
 RUN mkdir -p /app/logs
 
@@ -30,4 +33,4 @@ USER app
 EXPOSE 4200
 
 # Команда запуска
-CMD ["python", "mcp_server.py"]
+CMD ["sh", "-c", "alembic -c alembic.ini upgrade head && python mcp_server.py"]
