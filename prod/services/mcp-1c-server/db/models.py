@@ -1,4 +1,4 @@
-"""ORM models for the MCP service."""
+"""ORM models for mcp-1c-server."""
 
 from sqlalchemy import (
     BigInteger,
@@ -43,4 +43,3 @@ class Instruction(Base):
             unique=True,
         ),
     )
-

@@ -1,4 +1,4 @@
-"""Database configuration and session management."""
+"""Database configuration and session management for mcp-1c-server."""
 
 import os
 from sqlalchemy import create_engine
@@ -24,4 +24,3 @@ def get_session():
         yield session
     finally:
         session.close()
-
