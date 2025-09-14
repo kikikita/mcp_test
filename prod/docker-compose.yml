@@ -32,17 +32,14 @@ services:
     build: ./services/mcp-1c-server
     network_mode: host
     container_name: mcp_1c_server
-    environment:
-      - MCP_1C_BASE=${MCP_1C_BASE}
-      - ONEC_USERNAME=${ONEC_USERNAME}
-      - ONEC_PASSWORD=${ONEC_PASSWORD}
-      - ONEC_VERIFY_SSL=${ONEC_VERIFY_SSL:-false}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    env_file:
+      - .env
     volumes:
       - ./services/mcp-1c-server/logs:/app/logs
       - /etc/localtime:/etc/localtime:ro
     depends_on:
       - mcp_service
+      - instructions_db
     restart: unless-stopped
 
   # 3. PDF Service
