@@ -5,10 +5,10 @@ services:
   instructions_db:
     image: postgres:16
     container_name: instructions_db
-    environment:
-      - POSTGRES_USER=mcp_user
-      - POSTGRES_PASSWORD=mcp_pass
-      - POSTGRES_DB=mcp_howto
+    ports:
+      - 5432:5432
+    env_file:
+      - .env
     volumes:
       - instructions_data:/var/lib/postgresql/data
     networks:
@@ -22,10 +22,8 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "9001:9001"
-    environment:
-      - DATABASE_URL=postgresql+psycopg2://mcp_user:mcp_pass@instructions_db:5432/mcp_howto
-    depends_on:
-      - instructions_db
+    env_file:
+      - .env
     networks:
       - mcp_network
 
