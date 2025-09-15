@@ -1,4 +1,3 @@
-# mcp_server.py
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +14,8 @@ from mcp.server.fastmcp import FastMCP
 from odata_client import ODataClient, _is_guid
 from log_config import setup_logging
 from field_filter import filter_fields, resolve_allowed_fields
+from db.database import get_session
+from db.repository import InstructionRepository
 
 from dotenv import load_dotenv
 
@@ -26,7 +27,7 @@ load_dotenv()
 setup_logging()
 logger = logging.getLogger(__name__)
 
-# Heuristic to detect if a string already looks like an OData filter
+
 FILTER_TOKEN_RE = re.compile(
     r"\b(eq|ne|gt|lt|ge|le|and|or|not|substringof|startswith|endswith)\b",
     re.IGNORECASE,
@@ -553,11 +554,9 @@ class MCPServer:
         Затем для каждого строкового поля формируем вариант с substringof,
         остальные поля остаются как eq. Собираем выражение через AND.
         """
-        # 0) точный матч целиком
         base_eq = self._build_filter(filters) or ""
         attempts = [base_eq] if base_eq else []
 
-        # Определим строковые поля по типу из схемы
         schema = self.get_entity_schema(object_name) or {}
         props: Dict[str, Dict[str, Any]] = schema.get("properties", {}) or {}
         string_fields: List[Tuple[str, Any]] = []
@@ -565,7 +564,6 @@ class MCPServer:
             if props.get(k, {}).get("type") == "Edm.String":
                 string_fields.append((k, v))
 
-        # substringof для каждого строкового поля поверх eq остальных
         for fld, val in string_fields:
             parts: List[str] = []
             for k, v in filters.items():
@@ -575,11 +573,9 @@ class MCPServer:
                     parts.append(self._build_filter({k: v}) or "")
             attempts.append(" and ".join([p for p in parts if p]))
 
-        # + IsFolder eq false
         if include_only_elements and self._has_isfolder(object_name):
             attempts = [f"{a} and IsFolder eq false" if a else "IsFolder eq false" for a in attempts]
 
-        # Удалим пустые/дубликаты, сохранив порядок
         seen = set()
         uniq: List[str] = []
         for a in attempts:
@@ -860,7 +856,6 @@ class MCPServer:
                 "data": None,
             }
 
-        # ----- Построим список попыток -----
         attempts: List[str] = []
 
         def exec_attempts(attempt_list: List[str]) -> Dict[str, Any]:
@@ -1028,812 +1023,276 @@ _server = _server_instance
 mcp = FastMCP("mcp_1c_improved", port=4200, host="0.0.0.0")
 
 
-@logged_tool
-@mcp.tool()
-async def mcp_tool_entity_sets() -> Dict[str, Any]:
-    """
-    Получает список всех доступных наборов сущностей (EntitySets) из OData сервиса 1С.
-    Наборы сущностей представляют собой коллекции данных, доступные для чтения/записи через OData API.
-    Например: справочники (Catalog_*), документы (Document_*), регистры сведений и т.д.
-    Args:
-      Нет
-    Returns:
-      Dict с следующими полями:
-        - http_code (int|null): HTTP статус код последнего запроса
-        - http_message (str|null): Текстовое описание HTTP статуса  
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-        - entity_sets (list[str]): Список имен доступных коллекций данных
-    """
-    data = await asyncio.to_thread(_server.get_server_entity_sets)
-    return _json_ready(data)
-
-
-@logged_tool
-@mcp.tool()
-async def get_schema(
-        object_name: Annotated[str,
-        Field(description="Точное имя набора сущности (EntitySet) из OData сервиса 1С",
-              examples=["Catalog_Контрагенты", "Document_ПлатежноеПоручение", "Catalog_Номенклатура"],
-              max_length=256)]
-) -> Dict[str, Any]:
-    """
-    Возвращает схему полей для указанного набора сущностей OData 1С.
-    Схема содержит информацию о всех доступных полях объекта.
-    
-    Args:
-      object_name: Точное имя набора сущностей (EntitySet), полученное из функции mcp_tool_entity_sets()
-    
-    Returns:
-      Dict с следующими полями:
-        - http_code (int|null): HTTP статус код запроса метаданных
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-        - fields (list|null): Список с именами свойств сущности (например: "Ref_Key", "Description", "Code")
-
-    Примеры использования:
-        - Получить схему сущности Catalog_Контрагенты: get_schema("Catalog_Контрагенты")
-        - Получить схему платежного поручения: get_schema("Document_ПлатежноеПоручение")
-    """
-    data = await asyncio.to_thread(_server.get_schema, object_name)
-    return _json_ready(data)
-
-
-@logged_tool
-@mcp.tool()
-async def mcp_tool_metadata() -> Dict[str, Any]:
-    """
-    Получить полные метаданные OData сервиса 1С.
-    Возвращает разобранную информацию о всех доступных наборах сущностей и их структуре.
-    
-    Args:
-      Нет
-    
-    Returns:
-      Dict с следующими полями:
-        - http_code (int|null): HTTP статус код запроса метаданных
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-        - entity_sets (dict|null): Словарь с метаданными всех наборов сущностей, где:
-            - Ключи - имена EntitySet (например: "Catalog_Контрагенты")
-            - Значения - словари с описанием набора сущностей:
-              - entity_type (str|None): Тип сущности в формате OData
-              - properties (list): Список имен свойств сущности (например: ["Ref_Key", "Description", "Code"])
-    """
-    data = await asyncio.to_thread(_server.get_server_metadata)
-    return _json_ready(data)
-
-
-@logged_tool
-@mcp.tool()
-async def resolve_entity_name(
-        user_entity: Annotated[str, Field(
-            description="Название сущности на русском языке",
-            examples=["Контрагенты", "Платежное поручение", "Номенклатура"],
-            max_length=256)],
-        user_type: Annotated[str, Field(
-            description="Подсказка типа для уточнения поиска",
-            examples=["справочник", "документ", "регистр", "константа"],
-            max_length=256)] = None
-) -> Dict[str, Any]:
-    """
-    Нормализует человеческое название сущности в точное техническое имя EntitySet OData.
-    Используется для преобразования понятных пользователю названий в формальные имена,
-    необходимые для работы с API 1С через OData.
-    Функция выполняет поиск по уже загруженным метаданным OData,
-    поэтому требует предварительного вызова mcp_tool_metadata() или mcp_tool_entity_sets()
-    
-    Args:
-      user_entity: Название сущности на русском языке (например: "Контрагенты", "Платежное поручение")
-      user_type: Опциональная подсказка типа сущности для уточнения поиска 
-                (например: "справочник", "документ", "регистр")
-    
-    Returns:
-      Dict с следующими полями:
-        - resolved (str|null): Найденное точное имя EntitySet в формате OData 
-                        (например: "Catalog_Контрагенты", "Document_ПлатежноеПоручение")
-                        или None, если совпадение не найдено
-        - http_code (int|null): HTTP статус код запроса метаданных
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-
-    Примеры использования:
-        - Найти каталог контрагентов: resolve_entity_name("Контрагенты", "каталог")
-        - Найти сущность платежного поручения в 1С: resolve_entity_name("Платежное поручение")
-    """
-    resolved = await asyncio.to_thread(_server.resolve_entity_name, user_entity, user_type)
-    return _json_ready(
-        {
-            "resolved": resolved,
-            "http_code": _server.client.get_http_code(),
-            "http_message": _server.client.get_http_message(),
-            "odata_error_code": _server.client.get_error_code(),
-            "odata_error_message": _server.client.get_error_message(),
-        }
-    )
-
-
-@logged_tool
-@mcp.tool()
-async def resolve_field_name(
-        object_name: Annotated[str, Field(
-            description="Точное имя набора сущностей (EntitySet) из OData сервиса 1С",
-            examples=["Catalog_Контрагенты", "Document_ПлатежноеПоручение", "Catalog_Номенклатура"],
-            max_length=256
-        )],
-        user_field: Annotated[str, Field(
-            description="Название поля на русском языке или общепринятое обозначение",
-            examples=["Наименование", "ИНН", "Дата", "Код", "Сумма", "Номер"],
-            max_length=256
-        )]
-) -> Dict[str, Any]:
-    """
-    Нормализует человеческое название поля в точное техническое имя свойства OData.
-    Учитывает синонимы и общепринятые названия полей в системе 1С.
-    Функция использует заранее загруженные метаданные OData,
-    поэтому требует предварительного вызова mcp_tool_metadata() или get_schema()
-    
-    Args:
-      object_name: Точное имя набора сущностей (EntitySet), полученное из resolve_entity_name()
-      user_field: Название поля на русском языке или общепринятое обозначение
-                 (например: "Название", "номер", "ИНН", "Дата", "Код")
-    
-    Returns:
-      Dict с следующими полями:
-        - resolved (str|null): Найденное точное имя свойства в формате OData
-                        (например: "Description", "ИНН", "Date", "Code")
-                        или None, если совпадение не найдено
-        - http_code (int|null): HTTP статус код запроса метаданных
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-    
-    Примеры использования:
-        - Получить название поля, содержащего название контрагента: resolve_field_name("Catalog_Контрагенты", "название") → {"resolved": "Description"}
-        - Узнать, в каком поле сущности платежного поручения хранится дата создания платежного поручения: resolve_field_name("Document_ПлатежноеПоручение", "Дата") → {"resolved": "Date"}
-    """
-    resolved = await asyncio.to_thread(_server.resolve_field_name, object_name, user_field)
-    return _json_ready(
-        {
-            "resolved": resolved,
-            "http_code": _server.client.get_http_code(),
-            "http_message": _server.client.get_http_message(),
-            "odata_error_code": _server.client.get_error_code(),
-            "odata_error_message": _server.client.get_error_message(),
-        }
-    )
-
-
-@logged_tool
-@mcp.tool()
-async def create_object(
-        object_name: Annotated[str, Field(
-            description="Точное имя набора сущностей (EntitySet) из OData сервиса 1С",
-            examples=["Catalog_Контрагенты", "Document_ПлатежноеПоручение", "Catalog_Номенклатура"],
-            max_length=256
-        )],
-        data: Annotated[Dict[str, Any], Field(
-            description="Данные для создания новой записи в виде словаря поле: значение",
-            examples=[
-                {"Description": "Новый контрагент", "Code": "БП-000001", "ИНН": "1234567890"},
-                {"Date": "2024-01-15T00:00:00", "Number": "00002",
-                 "Организация_Key": "00000000-0000-0000-0000-000000000000"}
-            ]
-        )],
-        # expand: Annotated[str, Field(
-        #     description="Поля для расширения связанных данных (OData $expand). "
-        #                "Указываются через запятую",
-        #     examples=["Контрагент", "Склад,Номенклатура", "Организация"]
-        # )] = None,
-) -> Dict[str, Any]:
-    """
-        Создает новую запись в указанном наборе сущностей с поддержкой автоматического
-    разрешения ссылочных полей и расширения связанных данных.
-    Может создавать папки в каталогах.
-
-    Args:
-      object_name: Точное имя набора сущностей (EntitySet), полученное из resolve_entity_name()
-      data: Данные для создания записи.
-
-    Returns:
-      Dict с следующими полями:
-        - http_code (int|null): HTTP статус код запроса
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-        - data (list|dict|null): Созданная запись с расширенными данными или None при ошибке
-        - last_id (str|null): Ref_Key созданного объекта (уникальный идентификатор в 1С)
-
-    Примеры использования:
-      - Создать нового контрагента:
-        create_object("Catalog_Контрагенты", {"Description": "ООО Ромашка", "Code": "БП-00100"})
-      - Создать документ платежное поручение с известным контрагентом:
-        create_object("Document_ПлатежноеПоручение", {"Date": "2024-01-15T00:00:00", "Контрагент": "00000000-0000-0000-0000-000000000000"}))
-      - Создать папку Фрукты для товаров:
-        create_object("Catalog_Номенклатура", {"Description": "Фрукты", "IsFolder": True})
-    """
-    clean_data = _unescape_strings(data)
-    res = await asyncio.to_thread(_server.create_object, object_name, clean_data)
-    return _json_ready(res)
-
-
-@logged_tool
-@mcp.tool()
-async def update_object(
-        object_name: Annotated[str, Field(
-            description="Точное имя набора сущностей (EntitySet) из OData сервиса 1С",
-            examples=["Catalog_Контрагенты", "Document_ПлатежноеПоручение", "Catalog_Номенклатура"],
-            max_length=256
-        )],
-        object_id: Annotated[Union[str, Dict[str, str]], Field(
-            description="Идентификатор объекта для обновления. Это может быть: Ref_Key объекта в формате GUID, либо словарь с составным ключом для объектов с композитными идентификаторами",
-            examples=[
-                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-                {"Ref_Key": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
-                {"Code": "00001", "Вид": "Основной"}
-            ]
-        )],
-        data: Annotated[Dict[str, Any], Field(
-            description="Поля для обновления в виде словаря поле: новое_значение",
-            examples=[
-                {"Description": "Новое наименование", "ИНН": "0987654321"},
-                {"Контрагент": "00000000-0000-0000-0000-000000000000", "Сумма": 1000.50}
-            ]
-        )],
-        # expand: Annotated[str, Field(
-        #     description="Поля для расширения связанных данных (OData $expand). "
-        #                "Указываются через запятую",
-        #     examples=["Контрагент", "Склад,Номенклатура", "Организация"]
-        # )] = None,
-) -> Dict[str, Any]:
-    """
-    Обновляет существующую запись в указанном наборе сущностей по идентификатору.
-    Функция позволяет частично обновлять объекты, изменяя только указанные поля.
-    
-    Args:
-      object_name: Точное имя набора сущностей (EntitySet), полученное из resolve_entity_name()
-      object_id: Идентификатор обновляемого объекта. Для объектов с составными ключами 
-                передается словарь с параметрами идентификации
-      data: Поля для обновления
-    
-    Returns:
-      Dict с следующими полями:
-        - http_code (int|null): HTTP статус код запроса
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-        - data (dict|null): Обновленная запись с расширенными данными или None при ошибке
-
-    Примеры использования:
-        - Обновить наименование контрагента:
-          update_object("Catalog_Контрагенты", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", {"Description": "Новое описание"})
-        - Изменить контрагента в документе с автоматическим поиском:
-          update_object("Document_ПлатежноеПоручение", "bbbbbbbb-cccc-dddd-eeee-ffffffffffff", {"Контрагент_Key": "00000000-0000-0000-0000-000000000000"})
-        - Обновить несколько полей:
-          update_object("Catalog_Номенклатура", "cccccccc-dddd-eeee-ffff-gggggggggggg", {"Description": "Новое описание", "Цена": 150.75})
-    """
-    clean_data = _unescape_strings(data)
-    res = await asyncio.to_thread(_server.update_object, object_name, object_id, clean_data)
-    return _json_ready(res)
-
-
-@logged_tool
-@mcp.tool()
-async def delete_object(
-        object_name: Annotated[str, Field(
-            description="Точное имя набора сущностей (EntitySet) из OData сервиса 1С",
-            examples=["Catalog_Контрагенты", "Document_ПлатежноеПоручение", "Catalog_Номенклатура"],
-            max_length=256
-        )],
-        object_id: Annotated[Union[str, Dict[str, str]], Field(
-            description="Идентификатор объекта для удаления. Это может быть Ref_Key объекта в формате GUID либо словарь с составным ключом для объектов с композитными идентификаторами",
-            examples=[
-                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-                {"Ref_Key": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
-                {"Code": "БП-00001", "Вид": "Основной"}
-            ]
-        )],
-        physical_delete: Annotated[bool, Field(
-            description="Тип удаления: "
-                        "False - пометить на удаление (установить флаг DeletionMark) "
-                        "True - физическое удаление из базы данных",
-            examples=[False, True]
-        )] = False,
-) -> Dict[str, Any]:
-    """
-    Выполняет пометку на удаление или физическое удаление записи из указанного набора сущностей.
-    По умолчанию используется мягкое удаление (пометка на удаление), 
-    которое позволяет восстановить объекты. Физическое удаление безвозвратно удаляет 
-    данные из базы и должно использоваться с осторожностью.
-    
-    Args:
-      object_name: Точное имя набора сущностей (EntitySet), полученное из resolve_entity_name()
-      object_id: Идентификатор удаляемого объекта. Для объектов с составными ключами 
-                передается словарь с параметрами идентификации
-      physical_delete: Определяет тип операции удаления. По умолчанию False - пометка на удаление
-    
-    Returns:
-      Dict с следующими полями:
-        - http_code (int|null): HTTP статус код запроса
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-        - data (dict|null): Ответ сервера 1С или None при ошибке
-    
-    Примеры использования:
-        - Пометить контрагента на удаление: 
-          delete_object("Catalog_Контрагенты", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-        - Физически удалить документ: 
-          delete_object("Document_ПлатежноеПоручение", "bbbbbbbb-cccc-dddd-eeee-ffffffffffff", True)
-        - Удалить объект с составным ключом: 
-          delete_object("Catalog_ДополнительныеРеквизиты", {"Code": "БП-00001", "Вид": "Основной"})
-    """
-    res = await asyncio.to_thread(_server.delete_object, object_name, object_id, physical_delete)
-    return _json_ready(res)
-
-
-@logged_tool
-@mcp.tool()
-async def post_document(
-        object_name: Annotated[str, Field(
-            description="Точное имя набора сущностей документа (Document_*) из OData сервиса 1С",
-            examples=["Document_ПлатежноеПоручение", "Document_ПоступлениеТоваров", "Document_РеализацияТоваров"],
-            max_length=256
-        )],
-        object_id: Annotated[Union[str, Dict[str, str]], Field(
-            description="Идентификатор документа для проведения. Это может быть Ref_Key документа в формате GUID, либо словарь с составным ключом для документов с идентификатором",
-            examples=[
-                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-                {"Ref_Key": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}
-            ]
-        )],
-) -> Dict[str, Any]:
-    """
-    Выполняет проведение документа в системе 1С через вызов метода OData /Post.
-    Документ должен быть корректно заполнен перед проведением.
-    
-    Args:
-      object_name: Точное имя набора сущностей документа, полученное из resolve_entity_name()
-      object_id: Идентификатор проводимого документа.
-    
-    Returns:
-      Dict с следующими полями:
-        - http_code (int|null): HTTP статус код запроса
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-        - last_id (str|null): Ref_Key документа или None при ошибке
-        - data (dict|null): Ответ сервера 1С с результатом проведения или None при ошибке
-
-    Примеры использования:
-        - Провести платежное поручение: 
-        post_document("Document_ПлатежноеПоручение", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-        - Провести документ поступления: 
-        post_document("Document_ПоступлениеТоваров", "bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
-    """
-    res = await asyncio.to_thread(_server.post_document, object_name, object_id)
-    return _json_ready(res)
-
-
-@logged_tool
-@mcp.tool()
-async def unpost_document(
-        object_name: Annotated[str, Field(
-            description="Точное имя набора сущностей документа из OData сервиса 1С",
-            examples=["Document_ПлатежноеПоручение", "Document_ПоступлениеТоваров", "Document_РеализацияТоваров"],
-            max_length=256
-        )],
-        object_id: Annotated[Union[str, Dict[str, str]], Field(
-            description="Идентификатор документа для отмены проведения. Это может быть Ref_Key документа в формате GUID, либо словарь с составным ключом для документов с идентификатором",
-            examples=[
-                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-                {"Ref_Key": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}
-            ]
-        )],
-) -> Dict[str, Any]:
-    """
-    Выполняет отмену проведения документа в системе 1С через вызов метода OData /Unpost.
-    После отмены проведения документ снова становится доступным для редактирования.
-    
-    Args:
-      object_name: Точное имя набора сущностей документа, полученное из resolve_entity_name()
-      object_id: Идентификатор документа для отмены проведения.
-    
-    Returns:
-      Dict с следующими полями:
-        - http_code (int|null): HTTP статус код запроса
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-        - last_id (str|null): Ref_Key документа или None при ошибке
-        - data (dict|null): Ответ сервера 1С с результатом отмены проведения или None при ошибке
-
-    Примеры использования:
-        - Отменить проведение платежного поручения: 
-        unpost_document("Document_ПлатежноеПоручение", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-        - Отменить проведение документа поступления: 
-        unpost_document("Document_ПоступлениеТоваров", "bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
-    """
-    res = await asyncio.to_thread(_server.unpost_document, object_name, object_id)
-    return _json_ready(res)
-
-
-@logged_tool
-@mcp.tool()
-async def search_object(
-        user_type: Annotated[str, Field(
-            description="Тип сущности для поиска",
-            examples=["справочник", "документ", "регистр", "константа"],
-            max_length=256
-        )],
-        user_entity: Annotated[str, Field(
-            description="Название сущности на русском языке",
-            examples=["Контрагенты", "Платежное поручение", "Номенклатура", "Валюты"],
-            max_length=256
-        )],
-        user_filters: Annotated[Optional[Union[str, Dict[str, Any], List[str]]], Field(
-            description="Условия поиска. Допустимые варианты:" \
-                        "1) Строка - фильтр для поиска по основному полю. Используется как готовый `$filter`." \
-                        "2) Список - набор готовых выражений, объединяемых через AND." \
-                        "3) None - возврат первых записей без фильтра",
-            examples=[
-                "Number eq 'БП-000777'",
-                ["Date eq datetime'2024-01-19T00:00:00'", "СуммаДокумента ge 1000", "Number eq 'ККП-000727'"],
-            ]
-        )] = None,
-        top: Annotated[int, Field(
-            description="Ограничение количества возвращаемых записей",
-            examples=[1, 5, 10],
-            ge=1
-        )] = 1,
-        # expand: Annotated[str, Field(
-        #     description="Поля для расширения связанных данных (через запятую)",
-        #     examples=["Контрагент", "Склад,Номенклатура", "Владелец"]
-        # )] = None
-) -> Dict[str, Any]:
-    """
-    Выполняет интеллектуальный поиск по сущности с автоматическим разрешением имен
-    и прогрессивной стратегией поиска для повышения вероятности нахождения результатов.
-    Функция автоматически определяет оптимальные поля для текстового поиска и
-    последовательно применяет стратегии: точное совпадение → частичное совпадение →
-    регистронезависимый поиск → исключение папок (если применимо).
-    Если фильтр передан готовым выражением OData, он используется напрямую.
-    Имена полей нормализуются автоматически.
-    
-    Args:
-      user_type: Тип сущности для уточнения поиска (например: "справочник", "документ")
-      user_entity: Название сущности на русском языке
-      user_filters: Условия поиска. Может быть:
-                   - Строка: текст либо готовое OData-выражение
-                   - Список: выражения для объединения через AND
-                   - None: возврат первых записей без фильтра
-      top: Максимальное количество возвращаемых записей
-    
-    Returns:
-      Dict с следующими полями:
-        - http_code (int|null): HTTP статус код запроса
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-        - data (dict|list|null): Найденные данные. При top=1 возвращает один объект, 
-                                при top>1 возвращает список объектов
-    
-    Примеры использования:
-      - Найти документ по номеру:
-        search_object("документ", "Платежное поручение", "Number eq '00003'"})
-      - Найти документы по дате и сумме:
-        search_object(
-            "документ", "Платежное поручение",
-            ["Date eq datetime'2024-01-19T00:00:00'", "СуммаДокумента ge 1000"],
-            top=10
-        )
-      - Найти несколько номенклатур:
-        search_object("справочник", "Номенклатура", top=5)
-    """
-    res = await asyncio.to_thread(_server.search_object, user_type, user_entity, user_filters, top)
-    return _json_ready(res)
-
-
-@logged_tool
-@mcp.tool()
-async def ensure_entity(
-        user_type: Annotated[str, Field(
-            description="Тип сущности",
-            examples=["справочник", "документ", "регистр", "константа"],
-            max_length=256
-        )],
-        user_entity: Annotated[str, Field(
-            description="Название сущности на русском языке",
-            examples=["Контрагенты", "Номенклатура", "Валюты", "Склады"],
-            max_length=256
-        )],
-        data_or_filters: Annotated[Union[Dict[str, Any], str], Field(
-            description="Данные для операции upsert. Может быть: "
-                        "1) Словарь с фильтром для поиска существующей записи "
-                        "2) Словарь с данными для создания новой записи "
-                        "3) Строка для поиска по основному текстовому полю",
-            examples=[
-                {"Code": "БП-00001"},
-                {"Description": "ООО Ромашка", "ИНН": "1234567890"},
-                "ООО Ромашка"
-            ]
-        )],
-        expand: Annotated[str, Field(
-            description="Поля для расширения связанных данных (через запятую)",
-            examples=["Контрагент", "Склад,Номенклатура", "Организация"]
-        )] = None
-) -> Dict[str, Any]:
-    """
-    Выполняет операцию upsert (update или insert) для сущности: ищет запись по фильтру 
-    и если не находит - создает новую запись с переданными данными.
-    Паттерн "ensure" обеспечивает атомарность операции поиска-создания и полезен 
-    для гарантированного получения объекта без дублирования кода проверки существования.
-    Для сложных объектов с автоматическим разрешением ссылок рекомендуется 
-    использовать отдельные вызовы find_object и create_object для большего контроля.
-    
-    Args:
-      user_type: Тип сущности для уточнения поиска
-      user_entity: Название сущности на русском языке
-      data_or_filters: Данные для операции upsert. Если передается словарь, используется 
-                      как фильтр для поиска, и если поиск не дал результатов - как данные для создания.
-                      Если передается строка - выполняется поиск по основному текстовому полю.
-      expand: Поля для включения связанных данных
-    
-    Returns:
-      Dict с следующими полями:
-        - http_code (int|null): HTTP статус код последней операции
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-        - data (dict|null): Найденная или созданная запись
-        - last_id (str|null): Ref_Key объекта (особенно полезно при создании)
-    
-    Примеры использования:
-      - Найти или создать контрагента по коду: 
-        ensure_entity("справочник", "Контрагенты", {
-            "Code": "00100", 
-            "Description": "ООО Ромашка",
-            "ИНН": "1234567890"
-        })
-      - Найти или создать по наименованию: 
-        ensure_entity("справочник", "Номенклатура", "Новый товар")
-    """
-    res = await asyncio.to_thread(_server.ensure_entity, user_type, user_entity, data_or_filters, expand)
-    return _json_ready(res)
-
-
-@logged_tool
-@mcp.tool()
-async def create_document(
-        object_name: Annotated[str, Field(
-            description="Точное имя набора сущностей документа из OData сервиса 1С",
-            examples=["Document_ПоступлениеТоваровУслуг", "Document_ПлатежноеПоручение"],
-            max_length=256
-        )],
-        header: Annotated[Dict[str, Any], Field(
-            description="Данные для шапки документа в виде словаря поле: значение",
-            examples=[
-                {"Date": "2024-01-16T23:59:59", "Number": "124", "Ref_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx"},
-                {"Date": "2024-01-15T18:00:00", "Number": "123", "Контрагент": "xxxxxxxxxx-xxxx-xxxx-xxxx",
-                 "Контрагент_Type": "StandardODATA.Catalog_Контрагенты"},
-            ]
-        )],
-        rows: Annotated[Dict[str, List[Dict[str, Any]]], Field(
-            description="Данные для табличных частей документа. Ключ - точное имя табличной части, "
-                        "значение - список строк в виде словарей поле: значение, где каждой строке соответсвует один словарь",
-            examples=[
-                {"Товары": [{"Ref_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx", "Номенклатура_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx",
-                             "Количество": 10, "Цена": 100.50, "СтавкаНДС": "БезНДС"}]},
-                {"Услуги": [{"Ref_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx", "Номенклатура_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx",
-                             "Сумма": 250.75, "СтавкаНДС": "НДС20"}]}
-            ]
-        )] = None,
-        post: Annotated[bool, Field(
-            description="Автоматически провести документ после создания",
-            examples=[True, False]
-        )] = False,
-) -> Dict[str, Any]:
-    """
-    Создает документ с шапкой и табличными частями с возможностью автоматического проведения.
-
-    Args:
-      object_name: Точное имя набора сущностей документа, полученное из resolve_entity_name()
-      header: Данные для шапки документа. Поддерживает сложные объекты для автоматического
-             разрешения ссылок на связанные объекты. Для платежного поручения поле "Контрагент_Type" обязательно для заполнения
-      rows: Данные для табличных частей документа. Каждая табличная часть должна быть
-            указана под своим точным именем с списком строк.
-      post: Флаг автоматического проведения документа после успешного создания
-
-    Returns:
-      Dict с следующими полями:
-        - http_code (int|null): HTTP статус код основной операции
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-        - header (dict): Результат создания шапки документа со стандартными полями
-        - table_parts (dict): Результаты добавления строк табличных частей в формате:
-                             {имя_тч: [результат_строки1, результат_строки2, ...]}
-        - post (dict|null): Результат проведения документа, если post=True
-
-    Примеры использования:
-      - Создать документ поступления без проведения:
-        create_document("Document_ПоступлениеТоваровУслуг",
-                       {"Date": "2024-01-15T17:00:00", "Контрагент": "xxxxxxxxxx-xxxx-xxxx-xxxx"},
-                       {"Товары": [{"Номенклатура_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx", "Количество": 10}]})
-      - Создать и провести платежное поручение:
-        create_document("Document_ПлатежноеПоручение",
-                       {"Ref_Key": "xxxxxxxxxx-xxxx-xxxx-xxxx", "Date": "2024-01-15T15:00:00", "СуммаДокумента": 1000, "Контрагент_Type": "StandardODATA.Catalog_Контрагенты"},
-                       post=True)
-    """
-    res = await asyncio.to_thread(_server.create_document_with_rows, object_name, header, rows, post)
-    return _json_ready(res)
-
-
-# ------------------------------------------------------------------
-# Convenience tools — now using ONLY the shared _server.client
-# ------------------------------------------------------------------
-
-
-@logged_tool
-@mcp.tool()
-async def get_first_records(
-        entity_name: Annotated[str, Field(
-            description="Точное имя набора сущностей (EntitySet) из OData сервиса 1С",
-            examples=["Catalog_Контрагенты", "Document_ПлатежноеПоручение", "Catalog_Номенклатура"],
-            max_length=256
-        )],
-        n: Annotated[int, Field(
-            description="Количество записей для получения. Положительное целое число",
-            examples=[1, 3, 5]
-        )] = 1
-) -> Dict[str, Any]:
-    """
-    Получает первые несколько записей из указанного набора сущностей для ознакомления со структурой данных.
-    Функция предназначена для получения примеров записей и их структуры. Для документов 
-    "Document_ПоступлениеТоваровУслуг" автоматически исключает тяжелые табличные части 
-    "Товары" и "Услуги" для оптимизации производительности.
-    Функция полезна для анализа структуры данных перед выполнением запросов для выполнения операций с записями (создание, изменение и т.д.).
-    Для "Document_ПоступлениеТоваровУслуг" автоматически удаляются табличные части 
-    "Товары" и "Услуги" для избежания передачи больших объемов данных
-    
-    Args:
-      entity_name: Точное имя набора сущностей, полученное из resolve_entity_name()
-      n: Количество возвращаемых записей (положительное целое число)
-    
-    Returns:
-      Dict с следующими полями:
-        - http_code (int|null): HTTP статус код запроса
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-        - record (list): Список записей. Может быть пустым если данных нет или произошла ошибка
-    
-    Примеры использования:
-        - Получить пример контрагента: 
-        get_first_records("Catalog_Контрагенты", 1)
-        - Получить 3 примерa номенклатуры: 
-        get_first_records("Catalog_Номенклатура", 3)
-        - Получить пример документа поступления (без табличных частей): 
-        get_first_records("Document_ПоступлениеТоваровУслуг", 1)
-    """
-
-    def _sync() -> Dict[str, Any]:
+def _fetch_instruction(entity: str, action: str):
+    sess_gen = get_session()
+    session = next(sess_gen)
+    try:
+        repo = InstructionRepository(session)
+        return repo.get(entity, action)
+    finally:
         try:
-            entity = getattr(_server.client, entity_name)
+            sess_gen.close()
         except Exception:
-            return {
-                "http_code": None,
-                "http_message": f"Unknown entity {entity_name}",
-                "odata_error_code": None,
-                "odata_error_message": None,
-                "record": [],
-            }
-        try:
-            sample = entity.top(n).get().values()
-        except Exception as e:
-            return {
-                "http_code": _server.client.get_http_code(),
-                "http_message": str(e),
-                "odata_error_code": _server.client.get_error_code(),
-                "odata_error_message": _server.client.get_error_message(),
-                "record": [],
-            }
-        if sample:
-            recs = []
-            for i in range(len(sample)):
-                rec = sample[i]
-                if entity_name == "Document_ПоступлениеТоваровУслуг":
-                    rec = dict(rec)
-                    rec.pop("Товары", None)
-                    rec.pop("Услуги", None)
-                recs.append(rec)
-            recs = filter_fields(entity_name, recs)
-            return {
-                "http_code": _server.client.get_http_code(),
-                "http_message": _server.client.get_http_message(),
-                "odata_error_code": _server.client.get_error_code(),
-                "odata_error_message": _server.client.get_error_message(),
-                "record": recs,
-            }
-        else:
-            return {
-                "http_code": _server.client.get_http_code(),
-                "http_message": _server.client.get_http_message(),
-                "odata_error_code": _server.client.get_error_code(),
-                "odata_error_message": _server.client.get_error_message(),
-                "record": [],
-            }
-
-    data = await asyncio.to_thread(_sync)
-    return _json_ready(data)
+            try:
+                session.close()
+            except Exception:
+                pass
 
 
 @logged_tool
 @mcp.tool()
-async def add_product_service(
-        type_of_good: Annotated[str, Field(
-            description="Тип добавляемого элемента. Обязательно одно из значений: 'Товары' или 'Услуги'",
-            examples=["Товары", "Услуги"],
-            max_length=256
-        )],
-        waybill: Annotated[Dict[str, Any], Field(
-            description="Словарь существующего документа-накладной, в который добавляются товары либо услуги. "
-                        "Должен содержать соответствующую табличную часть, которая может быть пустой (в виде пустых списков)",
-            examples=[
-                {"Number": "123456", "Date": "2024-01-15T23:59:59", "Товары": [], "Услуги": []},
-                {"Ref_Key": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "Товары": [{"Номенклатура_Key": "..."}]}
-            ]
-        )],
-        product_or_service: Annotated[Dict[str, Any], Field(
-            description="Данные строки табличной части в виде словаря {поле: значение}",
-            examples=[
-                {"Номенклатура_Key": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff", "Количество": 10, "Цена": 100.50},
-                {"Номенклатура_Key": "cccccccc-dddd-eeee-ffff-gggggggggggg", "Количество": 5, "Сумма": 250.75}
-            ]
-        )]
+async def howto(
+    entity: Annotated[
+        str,
+        Field(
+            description=(
+                "Entity name or phrase (e.g. Catalog_Контрагенты or "
+                "'справочник контрагенты')"
+            ),
+            max_length=256,
+        ),
+    ],
+    action: Annotated[
+        str,
+        Field(
+            description=(
+                "Operation: search|get|create|update|delete|post|unpost"
+            ),
+            examples=["search", "create", "update", "delete", "post", "unpost"],
+        ),
+    ],
+    user_args: Annotated[
+        Optional[Dict[str, Any]],
+        Field(
+            description=(
+                "Optional user-provided args to consider when planning steps"
+            )
+        ),
+    ] = None,
 ) -> Dict[str, Any]:
     """
-    Добавляет товар или услугу в словарь документа-накладной.
-    Вспомогательная функция для добпавления в накладную табличной части.
-    
-    Args:
-      type_of_good: Тип добавляемого элемента - 'Товары' для товаров или 'Услуги' для услуг
-      waybill: Словарь документа-накладной. Должен содержать соответствующую 
-              табличную часть как список (может быть пустым, но обязательно должен быть записан в ключи "Товары" и "Услуги")
-      product_or_service: Данные строки табличной части для добавления
-    
-    Returns:
-      Dict с следующими полями:
-        - success (bool): Флаг успешного выполнения операции
-        - message (str|null): Текстовое описание результата операции
-        - error (str|null): Сообщение об ошибке если операция не удалась
-        - waybill (dict|null): Обновленный словарь документа с добавленной строкой
-    
-    Примеры использования:
-       - Добавить товар в накладную: 
-        add_product_service("Товары", waybill_dict, {"Номенклатура_Key": "...", "Количество": 10})
-       - Добавить услугу в документ: 
-        add_product_service("Услуги", waybill_dict, {"Номенклатура_Key": "...", "Сумма": 1000})
+    Возвращает инструкцию из БД для указанной сущности и действия.
+    Инструкция содержит описание, возможные шаги, схему аргументов и
+    карту полей. Эти данные необходимо использовать для подготовки шагов todo.
+
+    Обрабатываются случаи отсутствия инструкции и отсутствия шагов.
     """
+    resolved = await asyncio.to_thread(
+        _server.resolve_entity_name,
+        entity,
+        None,
+    )
 
-    def _sync() -> Dict[str, Any]:
-        try:
-            if type_of_good not in waybill:
-                return {"success": False, "error": f"Накладная не содержит таблицы {type_of_good}"}
-            if waybill[type_of_good] is None:
-                waybill[type_of_good] = []
-            if not isinstance(waybill[type_of_good], list):
-                return {"success": False, "error": f"Поле {type_of_good} должно быть списком"}
-            waybill[type_of_good].append(product_or_service)
-            return {"success": True, "message": "Товар или услуга успешно добавлен(а) в накладную", "waybill": waybill}
-        except Exception as e:
-            return {"success": False, "error": f"Произошла ошибка при добавлении товара или услуги: {str(e)}"}
+    entity_key = resolved or entity
 
-    data = await asyncio.to_thread(_sync)
-    return _json_ready(data)
+    act = action.strip().lower()
+    if act == "get":
+        act = "search"
+
+    instr = await asyncio.to_thread(_fetch_instruction, entity_key, act)
+
+    if not instr:
+        return _json_ready(
+            {
+                "entity_input": entity,
+                "entity_resolved": resolved,
+                "action": act,
+                "found": False,
+                "message": (
+                    "Instruction not found for entity "
+                    f"'{entity_key}' and action '{act}'"
+                ),
+            }
+        )
+
+    return _json_ready(
+        {
+            "entity_input": entity,
+            "entity_resolved": resolved,
+            "action": act,
+            "found": True,
+            "instruction": {
+                "descr": instr.descr,
+                "steps": instr.steps,
+                "arg_schema": instr.arg_schema,
+                "field_map": instr.field_map,
+            },
+            "hint": (
+                "Сопоставьте user_args с field_map и вызовите todo. Если "
+                "шагов нет — ответ сформируйте по descr."
+            ),
+        }
+    )
+
+
+def _ensure_bool(x: Any) -> Optional[bool]:
+    if x is None:
+        return None
+    if isinstance(x, bool):
+        return x
+    s = str(x).strip().lower()
+    if s in {"true", "1", "yes", "y", "on"}:
+        return True
+    if s in {"false", "0", "no", "n", "off"}:
+        return False
+    return None
+
+
+def _run_todo_step(step: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute a single todo step against OData via MCPServer methods."""
+    func = (step.get("func") or "").strip().lower()
+    args = step.get("args") or {}
+    if func in {"get", "search"}:
+        object_name = args.get("entity_name")
+        user_filters = args.get("user_filters")
+        top = args.get("top")
+        expand = args.get("expand")
+        if top is not None:
+            try:
+                top = int(top)
+            except Exception:
+                top = None
+        if top is not None and top <= 1:
+            return _server.find_object(object_name, filters=user_filters, expand=expand)
+        return _server.list_objects(object_name, filters=user_filters, top=top, expand=expand)
+
+    if func == "create":
+        object_name = args.get("entity_name")
+        data = args.get("data") or {}
+        expand = args.get("expand")
+        return _server.create_object(object_name, data, expand=expand)
+
+    if func == "update":
+        object_name = args.get("entity_name")
+        object_id = args.get("object_id") or args.get("id") or args.get("key")
+        data = args.get("data") or {}
+        expand = args.get("expand")
+        return _server.update_object(object_name, object_id, data, expand=expand)
+
+    if func == "delete":
+        object_name = args.get("entity_name")
+        object_id = args.get("object_id") or args.get("id") or args.get("key")
+        physical_delete = _ensure_bool(args.get("physical_delete")) or False
+        return _server.delete_object(object_name, object_id, physical_delete=physical_delete)
+
+    if func == "post":
+        object_name = args.get("entity_name")
+        object_id = args.get("object_id") or args.get("id") or args.get("key")
+        return _server.post_document(object_name, object_id)
+
+    if func == "unpost":
+        object_name = args.get("entity_name")
+        object_id = args.get("object_id") or args.get("id") or args.get("key")
+        return _server.unpost_document(object_name, object_id)
+
+    return {
+        "http_code": None,
+        "http_message": f"Неподдерживаемая операция '{func}'",
+        "odata_error_code": None,
+        "odata_error_message": None,
+        "data": None,
+    }
+
+
+@logged_tool
+@mcp.tool()
+async def todo(
+    steps: Annotated[
+        Optional[Union[Dict[str, Any], List[Dict[str, Any]]]],
+        Field(
+            description=(
+                "Шаг или массив шагов (func + args), подготовленных по "
+                "инструкции howto"
+            )
+        ),
+    ] = None,
+    instruction: Annotated[
+        Optional[Dict[str, Any]],
+        Field(
+            description=(
+                "Опционально: объект инструкции из howto. Используется, "
+                "если шаги отсутствуют — тогда будет возвращён ответ на "
+                "основе описания (descr)."
+            )
+        ),
+    ] = None,
+) -> Dict[str, Any]:
+    """
+    Выполняет шаги OData: search|get|create|update|delete|post|unpost.
+    Возвращает статусы по шагам и сводку
+    (completed|failed|no_steps).
+    """
+    allowed = {
+        "get",
+        "search",
+        "create",
+        "update",
+        "delete",
+        "post",
+        "unpost",
+    }
+
+    if steps is None and instruction:
+        instr = instruction.get("instruction") or instruction
+        descr = (instr or {}).get("descr")
+        insteps = (instr or {}).get("steps")
+        if not insteps:
+            return _json_ready(
+                {
+                    "steps": [],
+                    "summary": {
+                        "outcome": "no_steps",
+                        "message": descr or "Нет шагов.",
+                    },
+                }
+            )
+        steps = insteps
+
+    if isinstance(steps, dict):
+        steps_list = [steps]
+        step_ids = [steps.get("id") or "Step1"]
+    else:
+        steps_list = list(steps or [])
+        step_ids = []
+        if isinstance(steps, list):
+            step_ids = [f"Step{i+1}" for i in range(len(steps_list))]
+
+    results: List[Dict[str, Any]] = []
+    all_ok = True
+    for idx, st in enumerate(steps_list):
+        sid = (
+            st.get("id")
+            or (
+                step_ids[idx]
+                if idx < len(step_ids)
+                else f"Step{idx+1}"
+            )
+        )
+        func = (st.get("func") or "").strip().lower()
+        if func not in allowed:
+            results.append({
+                "id": sid,
+                "status": "failed",
+                "details": {
+                    "error": f"Неподдерживаемая операция '{func}'",
+                },
+            })
+            all_ok = False
+            continue
+        res = await asyncio.to_thread(_run_todo_step, st)
+        http_code = res.get("http_code")
+        ok = isinstance(http_code, int) and 200 <= http_code < 300
+        results.append({
+            "id": sid,
+            "status": "completed" if ok else "failed",
+            "details": _json_ready(res),
+        })
+        all_ok = all_ok and ok
+
+    outcome = "completed" if all_ok else "failed"
+    return _json_ready(
+        {"steps": results, "summary": {"outcome": outcome}}
+    )
 
 
 @logged_tool
@@ -1841,8 +1300,8 @@ async def add_product_service(
 async def solve(
         expression: Annotated[str,
         Field(description="Математическое выражение в виде строки",
-              examples=["2+3", "4.2*5", "147/3", "56+68+72.3-10", "(19+134)**2", "log(10)", "sqrt(4)"],
-              max_length=256)]
+        examples=["2+3", "4.2*5", "147/3", "56+68+72.3-10", "(19+134)**2", "log(10)", "sqrt(4)"],
+        max_length=256)]
 ) -> Dict[str, Any]:
     """
     Возвращает результат вычисления арифметического выражения.
@@ -1920,285 +1379,6 @@ async def solve(
     return _json_ready(result)
 
 
-@logged_tool
-@mcp.tool()
-async def get_records_by_date_range(
-        entity_name: Annotated[str, Field(
-            description="Точное имя набора сущностей (EntitySet) из OData сервиса 1С",
-            examples=["Document_ПлатежноеПоручение", "Document_ПоступлениеТоваровУслуг"],
-            max_length=256
-        )],
-        date_field: Annotated[str, Field(
-            description="Имя поля с датой для фильтрации по диапазону",
-            examples=["Date", "Дата", "ДатаСоздания"],
-            max_length=256
-        )] = "Date",
-        start_date: Annotated[datetime, Field(
-            description="Начальная дата диапазона (включительно). Если не указана, фильтр не применяется",
-            examples=[datetime(2025, 8, 18, 0, 0, 0)]
-        )] = None,
-        end_date: Annotated[datetime, Field(
-            description="Конечная дата диапазона (включительно). Если не указана, фильтр не применяется",
-            examples=[datetime(2025, 8, 18, 23, 59, 59)]
-        )] = None,
-        additional_filters: Annotated[str, Field(
-            description="Дополнительные фильтры в виде готового строкового фильтра OData. "
-                        "Примеры: \"Code eq 'БП-00001'\", \"Posted eq true\", "
-                        "\"Контрагент_Key eq 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'\"",
-            examples=[
-                "Posted eq true and Контрагент_Key eq 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'",
-                "DeletionMark eq false and Code eq 'БП-00001'"
-            ]
-        )] = None,
-        top: Annotated[int, Field(
-            description="Ограничение количества возвращаемых записей. "
-                        "Если не указано, возвращаются все записи соответствующие фильтрам",
-            examples=[5, 10, 50],
-        )] = None
-) -> Dict[str, Any]:
-    """
-    Выполняет выборку записей из указанного набора сущностей по диапазону дат 
-    с возможностью дополнительной фильтрации и ограничения количества.
-    Функция предназначена для получения исторических данных, отчетов и анализа 
-    информации за определенный период времени с поддержкой сложных условий фильтрации.
-    
-    Args:
-      entity_name: Точное имя набора сущностей, полученное из resolve_entity_name()
-      date_field: Имя поля даты для фильтрации по диапазону
-      start_date: Начальная дата диапазона (включительно)
-      end_date: Конечная дата диапазона (включительно)
-      additional_filters: Дополнительные условия фильтрации в виде строки OData
-      top: Максимальное количество возвращаемых записей
-    
-    Returns:
-      Dict с следующими полями:
-        - http_code (int|null): HTTP статус код запроса
-        - http_message (str|null): Текстовое описание HTTP статуса
-        - odata_error_code (str|null): Код ошибки OData, если произошла ошибка
-        - odata_error_message (str|null): Детальное сообщение об ошибке OData
-        - success (bool): Флаг успешного выполнения запроса
-        - data (list): Список записей, соответствующих условиям фильтрации
-        - error (str|null): Сообщение об ошибке если запрос не удался
-    
-    Примеры использования:
-      - Получить платежные поручения за январь 2024: 
-        get_records_by_date_range("Document_ПлатежноеПоручение", "Date", 
-                                 datetime(2024, 1, 1, 0, 0, 0), datetime(2025, 1, 31, 23, 59, 59))
-      - Получить проведенные документы поступления за период: 
-        get_records_by_date_range("Document_ПоступлениеТоваровУслуг", "Date",
-                                 datetime(2019, 3, 31, 14, 0, 0), datetime(2019, 4, 12, 13, 0, 0),
-                                 "Posted eq true")
-    """
-
-    def _sync() -> Dict[str, Any]:
-        try:
-            entity = getattr(_server.client, entity_name)
-
-            # Формирование фильтров к запросу
-            filters = []
-            if start_date:
-                filters.append(f"{date_field} ge datetime'{start_date.isoformat()}'")
-            if end_date:
-                filters.append(f"{date_field} le datetime'{end_date.isoformat()}'")
-
-            # Добавляем готовый строковый фильтр OData
-            if additional_filters and additional_filters.strip():
-                filters.append(additional_filters.strip())
-
-            filter_str = " and ".join(filters) if filters else None
-
-            query = entity
-            if filter_str:
-                query = query.filter(filter_str)
-            if top:
-                query = query.top(top)
-
-            response = query.get()
-            sample = response.values()
-
-            if sample:
-                result_dict = sample
-            else:
-                result_dict = []
-            result_dict = filter_fields(entity_name, result_dict)
-
-            return {
-                "http_code": _server.client.get_http_code(),
-                "http_message": _server.client.get_http_message(),
-                "odata_error_code": _server.client.get_error_code(),
-                "odata_error_message": _server.client.get_error_message(),
-                "success": _server.client.is_ok(),
-                "data": result_dict
-            }
-
-        except Exception as e:
-            return {
-                "http_code": _server.client.get_http_code(),
-                "http_message": str(e),
-                "odata_error_code": _server.client.get_error_code(),
-                "odata_error_message": _server.client.get_error_message(),
-                "success": False,
-                "error": f"Ошибка при получении записей: {str(e)}"
-            }
-
-    data = await asyncio.to_thread(_sync)
-    return _json_ready(data)
-
-
-@logged_tool
-@mcp.tool()
-async def get_aggregated_data(
-        entity_name: Annotated[str, Field(
-            description="Точное имя набора сущностей (EntitySet) из OData сервиса 1С",
-            examples=["Document_ПлатежноеПоручение", "Document_ПоступлениеТоваров", "InformationRegister_КурсыВалют"],
-            max_length=256
-        )],
-        group_by_field: Annotated[str, Field(
-            description="Имя поля для группировки данных. Определяет категории для агрегации",
-            examples=["Контрагент_Key", "Склад_Key", "Организация_Key"],
-            max_length=256
-        )],
-        aggregate_field: Annotated[str, Field(
-            description="Имя поля для агрегации. Должно содержать числовые значения",
-            examples=["Сумма", "СуммаНДС", "Цена"],
-            max_length=256
-        )],
-        aggregate_func: Annotated[str, Field(
-            description="Функция агрегации для применения к значениям поля",
-            examples=["sum", "avg", "min", "max", "count"],
-            max_length=256
-        )] = "sum",
-        date_field: Annotated[str, Field(
-            description="Имя поля с датой для фильтрации по диапазону",
-            examples=["Date", "Дата"],
-            max_length=256
-        )] = "Date",
-        start_date: Annotated[datetime, Field(
-            description="Начальная дата диапазона для фильтрации. Если не указана, фильтр не применяется",
-            examples=[datetime(2025, 8, 18, 0, 0, 0)]
-        )] = None,
-        end_date: Annotated[datetime, Field(
-            description="Конечная дата диапазона для фильтрации. Если не указана, фильтр не применяется",
-            examples=[datetime(2025, 8, 18, 23, 59, 59)]
-        )] = None,
-        top: Annotated[int, Field(
-            description="Ограничение количества возвращаемых записей",
-            examples=[1, 5, 10],
-        )] = None
-) -> Dict[str, Any]:
-    """
-    Выполняет агрегацию данных за указанный период времени по указанному полю группировки с применением функции агрегации.
-    Функция позволяет получать сводные данные: суммы, средние значения, минимальные/максимальные 
-    значения и количество записей по различным категориям с возможностью фильтрации по датам.
-    
-    Args:
-      entity_name: Точное имя набора сущностей, полученное из resolve_entity_name()
-      group_by_field: Поле для группировки данных (определяет категории)
-      aggregate_field: Поле с числовыми значениями для агрегации
-      aggregate_func: Функция агрегации: sum (сумма), avg (среднее), min (минимум), 
-                     max (максимум), count (количество)
-      date_field: Имя поля даты для фильтрации по диапазону
-      start_date: Начальная дата диапазона (включительно)
-      end_date: Конечная дата диапазона (включительно)
-      top: ограничение по количеству возвращаемых записей
-    
-    Returns:
-      Dict с следующими полями:
-        - success (bool): Флаг успешного выполнения операции
-        - data (dict|null): Словарь с агрегированными данными в формате {значение_группы: результат_агрегации}
-        - error (str|null): Сообщение об ошибке если операция не удалась
-    
-    Примеры использования:
-      - Получить общую сумму документов поступления по контрагентам за январь: 
-        get_aggregated_data("Document_ПоступлениеТоваровУслуг", "Контрагент_Key", "СуммаДокумента", "sum", 
-                           "Date", datetime(2024, 1, 1, 0, 0, 0), datetime(2024, 1, 31, 23, 59, 59))
-      - Получить среднюю сумму НДС по организациям: 
-        get_aggregated_data("Document_ПоступлениеТоваровУслуг", "Организация_Key", "СуммаНДС", "avg")
-      - Получить количество документов по контрагентам: 
-        get_aggregated_data("Document_ПоступлениеТоваровУслуг", "Контрагент_Key", "Ref_Key", "count")
-    """
-
-    def _sync() -> Dict[str, Any]:
-        try:
-            entity = getattr(_server.client, entity_name)
-
-            # Формирование фильтров к запросу
-            filters = []
-            if start_date:
-                filters.append(f"{date_field} ge datetime'{start_date.isoformat()}'")
-            if end_date:
-                filters.append(f"{date_field} le datetime'{end_date.isoformat()}'")
-
-            filter_str = " and ".join(filters) if filters else None
-
-            query = entity
-            if filter_str:
-                query = query.filter(filter_str)
-            if top:
-                query = query.top(top)
-
-            response = query.get()
-            records = response.values()
-
-            if records:
-                result_dict = records
-            else:
-                result_dict = []
-
-            # Применяем фильтрацию полей если нужно
-            result_dict = filter_fields(entity_name, result_dict)
-
-            # Агрегируем данные
-            aggregated_result = {}
-            for record in result_dict:
-                group_value = record.get(group_by_field)
-                agg_value = record.get(aggregate_field, 0)
-
-                if group_value not in aggregated_result:
-                    aggregated_result[group_value] = []
-                aggregated_result[group_value].append(agg_value)
-
-            # Применяем функцию агрегации
-            if aggregate_func == "sum":
-                final_result = {k: sum(v) for k, v in aggregated_result.items()}
-            elif aggregate_func == "avg":
-                final_result = {k: sum(v) / len(v) for k, v in aggregated_result.items()}
-            elif aggregate_func == "min":
-                final_result = {k: min(v) for k, v in aggregated_result.items()}
-            elif aggregate_func == "max":
-                final_result = {k: max(v) for k, v in aggregated_result.items()}
-            elif aggregate_func == "count":
-                final_result = {k: len(v) for k, v in aggregated_result.items()}
-            else:
-                return {
-                    "success": False,
-                    "error": f"Unsupported aggregate function: {aggregate_func}"
-                }
-
-            return {
-                "http_code": _server.client.get_http_code(),
-                "http_message": _server.client.get_http_message(),
-                "odata_error_code": _server.client.get_error_code(),
-                "odata_error_message": _server.client.get_error_message(),
-                "success": True,
-                "data": final_result
-            }
-
-        except Exception as e:
-            return {
-                "http_code": _server.client.get_http_code(),
-                "http_message": str(e),
-                "odata_error_code": _server.client.get_error_code(),
-                "odata_error_message": _server.client.get_error_message(),
-                "success": False,
-                "error": f"Ошибка при агрегации данных: {str(e)}"
-            }
-
-    data = await asyncio.to_thread(_sync)
-    return _json_ready(data)
-
-
-# ASGI application for running with Uvicorn/gunicorn
 app = mcp.streamable_http_app()
 
 if __name__ == "__main__":
