@@ -1,4 +1,4 @@
-# Core MCP dependencies
+﻿# Core MCP dependencies
 mcp>=1.0.0
 fastmcp>=0.2.0
 
@@ -13,6 +13,10 @@ pydantic[email]>=2.0.0
 
 # Environment and configuration
 python-dotenv>=1.0.0
+
+# Google integrations
+google-api-python-client>=2.0.0
+google-auth>=2.0.0
 
 # Logging
 structlog>=23.0.0
@@ -36,3 +40,4 @@ uvloop>=0.17.0; sys_platform != "win32"
 SQLAlchemy
 psycopg2-binary
 alembic
+
