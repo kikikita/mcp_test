@@ -31,9 +31,6 @@ class Settings:
             "steps",
         )
 
-        raw_keys = os.getenv("GEMINI_API_KEYS") or os.getenv("GEMINI_API_KEY", "")
-        self.gemini_api_key: SecretStr = SecretStr(raw_keys)
-
     @property
     def project_root(self) -> Path:
         return self._project_root
