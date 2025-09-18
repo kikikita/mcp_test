@@ -18,13 +18,31 @@ import time
 
 import requests
 from requests.adapters import HTTPAdapter
+
+
 from urllib3.util.retry import Retry
 from urllib.parse import quote, urlencode
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------- Response wrapper ----------------------------
+class ODataConnectionError(RuntimeError):
+    """Raised when a low-level connection issue occurs while talking to 1C."""
+
+    def __init__(self, base_url: str, original: requests.RequestException) -> None:
+        message = f"Connection to {base_url} failed: {original}"
+        super().__init__(message)
+        self.base_url = base_url
+        self.original = original
+
+
+_CONNECTIVITY_ERRORS = (
+    requests.exceptions.ConnectTimeout,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.ReadTimeout,
+    requests.exceptions.SSLError,
+)
+
 
 class ODataResponse:
     """Wrapper around requests.Response providing helpers for 1C OData payloads."""
@@ -267,6 +285,8 @@ class ODataEndpoint:
             self._client.odata_message = None
             # Return session to pool even on exception
             self._client._return_session_to_pool(sess)
+            if isinstance(exc, _CONNECTIVITY_ERRORS):
+                raise ODataConnectionError(self._client.base_url, exc) from exc
             raise
         finally:
             # Reset state for next chain

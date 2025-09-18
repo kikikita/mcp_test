@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Annotated
 from pydantic import Field
 from mcp.server.fastmcp import FastMCP
-from odata_client import ODataClient, _is_guid
+from odata_client import ODataClient, ODataConnectionError, _is_guid
 from log_config import setup_logging
 from field_filter import filter_fields, resolve_allowed_fields
 from db.database import get_session
@@ -118,76 +118,76 @@ class MCPServer:
 
     ENTITY_TYPE_PREFIX: Dict[str, str] = {
         # Catalogues
-        "СЃРїСЂР°РІРѕС‡РЅРёРє": "Catalog_",
-        "СЃРїСЂР°РІРѕС‡РЅРёРєРё": "Catalog_",
+        "справочник": "Catalog_",
+        "справочники": "Catalog_",
         "catalog": "Catalog_",
         "catalogs": "Catalog_",
-        "РєР°С‚Р°Р»РѕРі": "Catalog_",
-        "РєР°С‚Р°Р»РѕРіРё": "Catalog_",
+        "каталог": "Catalog_",
+        "каталоги": "Catalog_",
         # Documents
         "document": "Document_",
         "documents": "Document_",
-        "РґРѕРєСѓРјРµРЅС‚": "Document_",
-        "РґРѕРєСѓРјРµРЅС‚С‹": "Document_",
-        "Р¶СѓСЂРЅР°Р»": "DocumentJournal_",
-        "Р¶СѓСЂРЅР°Р»С‹": "DocumentJournal_",
+        "документ": "Document_",
+        "документы": "Document_",
+        "журнал": "DocumentJournal_",
+        "журналы": "DocumentJournal_",
         # Constants
         "constant": "Constant_",
         "constants": "Constant_",
-        "РєРѕРЅСЃС‚Р°РЅС‚Р°": "Constant_",
-        "РєРѕРЅСЃС‚Р°РЅС‚С‹": "Constant_",
+        "константа": "Constant_",
+        "константы": "Constant_",
         # Registers
-        "РїР»Р°РЅ РѕР±РјРµРЅР°": "ExchangePlan_",
-        "РїР»Р°РЅС‹ РѕР±РјРµРЅР°": "ExchangePlan_",
+        "план обмена": "ExchangePlan_",
+        "планы обмена": "ExchangePlan_",
         "exchangeplan": "ExchangePlan_",
         "chart of accounts": "ChartOfAccounts_",
-        "РїР»Р°РЅ СЃС‡РµС‚РѕРІ": "ChartOfAccounts_",
-        "РїР»Р°РЅС‹ СЃС‡РµС‚РѕРІ": "ChartOfAccounts_",
+        "план счетов": "ChartOfAccounts_",
+        "планы счетов": "ChartOfAccounts_",
         "chartofcalculationtypes": "ChartOfCalculationTypes_",
-        "РїР»Р°РЅ РІРёРґРѕРІ СЂР°СЃС‡РµС‚Р°": "ChartOfCalculationTypes_",
-        "РїР»Р°РЅС‹ РІРёРґРѕРІ СЂР°СЃС‡РµС‚Р°": "ChartOfCalculationTypes_",
+        "план видов расчета": "ChartOfCalculationTypes_",
+        "планы видов расчета": "ChartOfCalculationTypes_",
         "chartofcharacteristictypes": "ChartOfCharacteristicTypes_",
-        "РїР»Р°РЅ РІРёРґРѕРІ С…Р°СЂР°РєС‚РµСЂРёСЃС‚РёРє": "ChartOfCharacteristicTypes_",
-        "СЂРµРіРёСЃС‚СЂ СЃРІРµРґРµРЅРёР№": "InformationRegister_",
-        "СЂРµРіРёСЃС‚СЂС‹ СЃРІРµРґРµРЅРёР№": "InformationRegister_",
+        "план видов характеристик": "ChartOfCharacteristicTypes_",
+        "регистр сведений": "InformationRegister_",
+        "регистры сведений": "InformationRegister_",
         "informationregister": "InformationRegister_",
-        "СЂРµРіРёСЃС‚СЂ РЅР°РєРѕРїР»РµРЅРёСЏ": "AccumulationRegister_",
-        "СЂРµРіРёСЃС‚СЂС‹ РЅР°РєРѕРїР»РµРЅРёСЏ": "AccumulationRegister_",
+        "регистр накопления": "AccumulationRegister_",
+        "регистры накопления": "AccumulationRegister_",
         "accumulationregister": "AccumulationRegister_",
-        "СЂРµРіРёСЃС‚СЂ СЂР°СЃС‡РµС‚Р°": "CalculationRegister_",
-        "СЂРµРіРёСЃС‚СЂС‹ СЂР°СЃС‡РµС‚Р°": "CalculationRegister_",
+        "регистр расчета": "CalculationRegister_",
+        "регистры расчета": "CalculationRegister_",
         "calculationregister": "CalculationRegister_",
-        "СЂРµРіРёСЃС‚СЂ Р±СѓС…РіР°Р»С‚РµСЂРёРё": "AccountingRegister_",
-        "СЂРµРіРёСЃС‚СЂС‹ Р±СѓС…РіР°Р»С‚РµСЂРёРё": "AccountingRegister_",
+        "регистр бухгалтерии": "AccountingRegister_",
+        "регистры бухгалтерии": "AccountingRegister_",
         "accountingregister": "AccountingRegister_",
-        "Р±РёР·РЅРµСЃ РїСЂРѕС†РµСЃСЃ": "BusinessProcess_",
-        "Р±РёР·РЅРµСЃ РїСЂРѕС†РµСЃСЃС‹": "BusinessProcess_",
+        "бизнес процесс": "BusinessProcess_",
+        "бизнес процессы": "BusinessProcess_",
         "businessprocess": "BusinessProcess_",
-        "Р·Р°РґР°С‡Р°": "Task_",
-        "Р·Р°РґР°С‡Рё": "Task_",
+        "задача": "Task_",
+        "задачи": "Task_",
         "task": "Task_",
         "tasks": "Task_",
     }
 
     FIELD_SYNONYMS: Dict[str, List[str]] = {
-        "РЅР°РёРјРµРЅРѕРІР°РЅРёРµ": ["Description", "РќР°РёРјРµРЅРѕРІР°РЅРёРµ", "Name"],
-        "РёРјСЏ": ["Description", "Name", "РќР°РёРјРµРЅРѕРІР°РЅРёРµ"],
-        "РѕРїРёСЃР°РЅРёРµ": ["Description", "РќР°РёРјРµРЅРѕРІР°РЅРёРµ"],
-        "code": ["Code", "РљРѕРґ"],
-        "РєРѕРґ": ["Code", "РљРѕРґ"],
-        "Р°СЂС‚РёРєСѓР»": ["РђСЂС‚РёРєСѓР»", "SKU", "Code"],
-        "РёРЅРЅ": ["РРќРќ", "Inn", "INN"],
-        "РЅРѕРјРµСЂ": ["РќРѕРјРµСЂ", "Number", "РќРѕРјРµСЂР”РѕРєСѓРјРµРЅС‚Р°", "DocumentNumber"],
-        "РёРґ": ["Ref_Key", "ID", "RefKey"],
+        "наименование": ["Description", "Наименование", "Name"],
+        "имя": ["Description", "Name", "Наименование"],
+        "описание": ["Description", "Наименование"],
+        "code": ["Code", "Код"],
+        "код": ["Code", "Код"],
+        "артикул": ["Артикул", "SKU", "Code"],
+        "инн": ["ИНН", "Inn", "INN"],
+        "номер": ["Номер", "Number", "НомерДокумента", "DocumentNumber"],
+        "ид": ["Ref_Key", "ID", "RefKey"],
         "guid": ["Ref_Key"],
-        "РіРёРґ": ["Ref_Key"],
-        "РєРѕР»РёС‡РµСЃС‚РІРѕ": ["РљРѕР»РёС‡РµСЃС‚РІРѕ", "Quantity"],
-        "С†РµРЅР°": ["Р¦РµРЅР°", "Price"],
-        "СЃСѓРјРјР°": ["РЎСѓРјРјР°", "Amount"],
-        "СЃС‚РѕРёРјРѕСЃС‚СЊ": ["РЎСѓРјРјР°", "Amount", "Р¦РµРЅР°"],
-        "РґР°С‚Р°": ["Р”Р°С‚Р°", "Date", "Р”Р°С‚Р°Р”РѕРєСѓРјРµРЅС‚Р°"],
-        "РґР°С‚Р° РґРѕРєСѓРјРµРЅС‚Р°": ["Р”Р°С‚Р°", "Р”Р°С‚Р°Р”РѕРєСѓРјРµРЅС‚Р°", "Date"],
-        "С„РѕСЂРјР°С‚": ["Р¤РѕСЂРјР°С‚", "Format"],
+        "гид": ["Ref_Key"],
+        "количество": ["Количество", "Quantity"],
+        "цена": ["Цена", "Price"],
+        "сумма": ["Сумма", "Amount"],
+        "стоимость": ["Сумма", "Amount", "Цена"],
+        "дата": ["Дата", "Date", "ДатаДокумента"],
+        "дата документа": ["Дата", "ДатаДокумента", "Date"],
+        "формат": ["Формат", "Format"],
     }
 
     def __init__(
@@ -531,13 +531,13 @@ class MCPServer:
         return f"{field} eq '{safe}'"
 
     def _compose_expr_substr(self, field: str, value: Any) -> str:
-        """РЎС‚СЂРѕРёС‚ РІС‹СЂР°Р¶РµРЅРёРµ substringof СЃ РєРѕРЅСЃС‚Р°РЅС‚РѕР№ РІ РїРµСЂРІРѕРј Р°СЂРіСѓРјРµРЅС‚Рµ.
+        """Строит выражение substringof с константой в первом аргументе.
 
-        OData РІ 1РЎ РѕР¶РёРґР°РµС‚, С‡С‚Рѕ РїРµСЂРІС‹Рј Р°СЂРіСѓРјРµРЅС‚РѕРј С„СѓРЅРєС†РёРё Р±СѓРґРµС‚ РїРѕРґСЃС‚СЂРѕРєР°,
-        Р° РІС‚РѕСЂС‹Рј вЂ” РёРјСЏ РїРѕР»СЏ. РРјРµРЅРЅРѕ РїРѕСЌС‚РѕРјСѓ СЂР°РЅРµРµ РІРѕР·РЅРёРєР°Р»Р° РѕС€РёР±РєР°
-        "РќРµРїСЂР°РІРёР»СЊРЅС‹Р№ С‚РёРї Р°СЂРіСѓРјРµРЅС‚Р°": РјС‹ РїРµСЂРµРґР°РІР°Р»Рё Р°СЂРіСѓРјРµРЅС‚С‹ РІ РѕР±СЂР°С‚РЅРѕРј
-        РїРѕСЂСЏРґРєРµ. Р—РґРµСЃСЊ РјС‹ С„РѕСЂРјРёСЂСѓРµРј РєРѕСЂСЂРµРєС‚РЅРѕРµ РІС‹СЂР°Р¶РµРЅРёРµ
-        substringof('<РїРѕРґСЃС‚СЂРѕРєР°>', Field).
+        OData в 1С ожидает, что первым аргументом функции будет подстрока,
+        а вторым — имя поля. Именно поэтому ранее возникала ошибка
+        "Неправильный тип аргумента": мы передавали аргументы в обратном
+        порядке. Здесь мы формируем корректное выражение
+        substringof('<подстрока>', Field).
         """
         safe = str(value or "").replace("'", "''")
         return f"substringof('{safe}', {field})"
@@ -558,9 +558,9 @@ class MCPServer:
             self, object_name: str, filters: Dict[str, Any], include_only_elements: bool
     ) -> List[str]:
         """
-        РЎРЅР°С‡Р°Р»Р° С‚РѕС‡РЅС‹Рµ eq РґР»СЏ РІСЃРµС… РїРѕР»РµР№.
-        Р—Р°С‚РµРј РґР»СЏ РєР°Р¶РґРѕРіРѕ СЃС‚СЂРѕРєРѕРІРѕРіРѕ РїРѕР»СЏ С„РѕСЂРјРёСЂСѓРµРј РІР°СЂРёР°РЅС‚ СЃ substringof,
-        РѕСЃС‚Р°Р»СЊРЅС‹Рµ РїРѕР»СЏ РѕСЃС‚Р°СЋС‚СЃСЏ РєР°Рє eq. РЎРѕР±РёСЂР°РµРј РІС‹СЂР°Р¶РµРЅРёРµ С‡РµСЂРµР· AND.
+        Сначала точные eq для всех полей.
+        Затем для каждого строкового поля формируем вариант с substringof,
+        остальные поля остаются как eq. Собираем выражение через AND.
         """
         base_eq = self._build_filter(filters) or ""
         attempts = [base_eq] if base_eq else []
@@ -616,6 +616,8 @@ class MCPServer:
                 builder = builder.filter(flt)
         try:
             response = builder.get()
+        except ODataConnectionError:
+            raise
         except Exception as e:
             logger.warning("Failed to list objects for %s: %s", object_name, e)
             self.client.http_code = None
@@ -649,6 +651,8 @@ class MCPServer:
         builder = builder.top(1)
         try:
             response = builder.get()
+        except ODataConnectionError:
+            raise
         except Exception as e:
             logger.warning("Failed to find object for %s: %s", object_name, e)
             self.client.http_code = None
@@ -681,6 +685,8 @@ class MCPServer:
         resolved = self._resolve_refs_in_payload(object_name, data or {})
         try:
             response = builder.create(resolved)
+        except ODataConnectionError:
+            raise
         except Exception as e:
             logger.warning("Failed to create object %s: %s", object_name, e)
             self.client.http_code = None
@@ -711,6 +717,8 @@ class MCPServer:
         resolved = self._resolve_refs_in_payload(object_name, data or {})
         try:
             response = builder.update(data=resolved)
+        except ODataConnectionError:
+            raise
         except Exception as e:
             logger.warning("Failed to update object %s: %s", object_name, e)
             self.client.http_code = None
@@ -737,6 +745,8 @@ class MCPServer:
             builder = getattr(self.client, object_name).id(object_id)
             try:
                 response = builder.delete()
+            except ODataConnectionError:
+                raise
             except Exception as e:
                 logger.warning("Failed to physically delete object %s: %s", object_name, e)
                 self.client.http_code = None
@@ -758,6 +768,8 @@ class MCPServer:
         builder = getattr(self.client, object_name).id(object_id)
         try:
             response = builder("Post")
+        except ODataConnectionError:
+            raise
         except Exception as e:
             logger.warning("Failed to post document %s: %s", object_name, e)
             self.client.http_code = None
@@ -778,6 +790,8 @@ class MCPServer:
         builder = getattr(self.client, object_name).id(object_id)
         try:
             response = builder("Unpost")
+        except ODataConnectionError:
+            raise
         except Exception as e:
             logger.warning("Failed to unpost document %s: %s", object_name, e)
             self.client.http_code = None
@@ -832,17 +846,17 @@ class MCPServer:
             expand: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        РџСЂРѕРіСЂРµСЃСЃРёРІРЅС‹Р№ РїРѕРёСЃРє.
+        Прогрессивный поиск.
 
         - filters=str:
-            * РµСЃР»Рё СЃС‚СЂРѕРєР° РїРѕС…РѕР¶Р° РЅР° РіРѕС‚РѕРІС‹Р№ OData `$filter`, РѕРЅ РІС‹РїРѕР»РЅСЏРµС‚СЃСЏ РєР°Рє РµСЃС‚СЊ;
-            * РёРЅР°С‡Рµ РёС‰РµРј РїРѕ РѕСЃРЅРѕРІРЅРѕРјСѓ С‚РµРєСЃС‚РѕРІРѕРјСѓ РїРѕР»СЋ (eq в†’ substringof), Р·Р°С‚РµРј
-              РІР°СЂРёР°РЅС‚С‹ СЃ `IsFolder eq false`, РµСЃР»Рё РµСЃС‚СЊ).
-        - filters=dict: СЃРЅР°С‡Р°Р»Р° С‚РѕС‡РЅС‹Рµ `eq`, Р·Р°С‚РµРј РґР»СЏ СЃС‚СЂРѕРєРѕРІС‹С… РїРѕР»РµР№ РґРѕР±Р°РІР»СЏРµС‚СЃСЏ
-          РІР°СЂРёР°РЅС‚ СЃ `substringof` (РѕСЃС‚Р°Р»СЊРЅС‹Рµ РѕСЃС‚Р°СЋС‚СЃСЏ `eq`), РїР»СЋСЃ РїРѕРїС‹С‚РєРё СЃ
+            * если строка похожа на готовый OData `$filter`, он выполняется как есть;
+            * иначе ищем по основному текстовому полю (eq → substringof), затем
+              варианты с `IsFolder eq false`, если есть).
+        - filters=dict: сначала точные `eq`, затем для строковых полей добавляется
+          вариант с `substringof` (остальные остаются `eq`), плюс попытки с
           `IsFolder eq false`.
 
-        Р’РѕР·РІСЂР°С‰Р°РµС‚ РїРµСЂРІС‹Р№ РЅРµРїСѓСЃС‚РѕР№ СЂРµР·СѓР»СЊС‚Р°С‚ (СѓС‡РёС‚С‹РІР°СЏ `top`).
+        Возвращает первый непустой результат (учитывая `top`).
         """
         logger.info(
             "search_object: type=%s entity=%s filters_type=%s top=%s expand=%s filters=%r",
@@ -879,7 +893,6 @@ class MCPServer:
                     len(vals or []),
                 )
                 if vals:
-                    # Р•СЃР»Рё top<=1 вЂ” РІРµСЂРЅСѓС‚СЊ РѕРґРёРЅРѕС‡РЅС‹Р№ РѕР±СЉРµРєС‚, РёРЅР°С‡Рµ СЃРїРёСЃРѕРє
                     if top is not None and int(top) <= 1:
                         res["data"] = vals[0]
                     else:
@@ -887,27 +900,21 @@ class MCPServer:
                     return res
                 if res.get("http_code") == 400 and res.get("odata_error_code") == 21:
                     continue
-            # РµСЃР»Рё РІСЃРµ РїСѓСЃС‚Рѕ вЂ” РІРµСЂРЅС‘Рј РїРѕСЃР»РµРґРЅРёР№ res (РёР»Рё вЂњРїСѓСЃС‚РѕвЂќ)
+
             if attempt_list:
                 return res
-            # РІРѕРѕР±С‰Рµ Р±РµР· РїРѕРїС‹С‚РѕРє вЂ” РєР°Рє list_objects Р±РµР· С„РёР»СЊС‚СЂР°
             return self.list_objects(object_name, filters=None, top=top, expand=expand)
 
-        # РЎР»РѕРІР°СЂРЅС‹Рµ С„РёР»СЊС‚СЂС‹: СЃРЅР°С‡Р°Р»Р° РЅРѕСЂРјР°Р»РёР·СѓРµРј РёРјРµРЅР° РїРѕР»РµР№
         if isinstance(user_filters, dict):
             normalized: Dict[str, Any] = {}
             for k, v in user_filters.items():
                 field = self.resolve_field_name(object_name, k) or k
                 normalized[field] = v
-            # 1-СЏ РІРѕР»РЅР°: С‚РѕС‡РЅС‹Рµ eq
             attempts = [self._build_filter(normalized) or ""]
-            # 2-СЏ РІРѕР»РЅР°: РґР»СЏ РєР°Р¶РґРѕРіРѕ СЃС‚СЂРѕРєРѕРІРѕРіРѕ РїРѕР»СЏ вЂ” substringof
             attempts += self._progressive_attempts_for_dict(object_name, normalized, include_only_elements=False)
-            # РџСЂРѕР±СѓРµРј
             res = exec_attempts([a for a in attempts if a])
             if res.get("data"):
                 return res
-            # Р•СЃР»Рё РїСѓСЃС‚Рѕ вЂ” РґРѕР±Р°РІРёРј В«С‚РѕР»СЊРєРѕ СЌР»РµРјРµРЅС‚С‹В»
             if self._has_isfolder(object_name):
                 attempts_is = self._progressive_attempts_for_dict(
                     object_name, normalized, include_only_elements=True
@@ -915,29 +922,24 @@ class MCPServer:
                 res = exec_attempts(attempts_is)
                 return res
 
-            return res  # РїСѓСЃС‚Рѕ
+            return res
 
-        # РЎС‚СЂРѕРєРѕРІС‹Р№ РїРѕРёСЃРє РёР»Рё РіРѕС‚РѕРІС‹Р№ С„РёР»СЊС‚СЂ
         if isinstance(user_filters, str) and user_filters:
-            # Р•СЃР»Рё СЃС‚СЂРѕРєР° РїРѕС…РѕР¶Р° РЅР° РіРѕС‚РѕРІРѕРµ OData-РІС‹СЂР°Р¶РµРЅРёРµ вЂ” РёСЃРїРѕР»СЊР·СѓРµРј РµС‘ РЅР°РїСЂСЏРјСѓСЋ
             if self._looks_like_filter(user_filters):
                 if top is not None and int(top) <= 1:
                     return self.find_object(object_name, filters=user_filters, expand=expand)
                 return self.list_objects(object_name, filters=user_filters, top=top, expand=expand)
 
-            # РРЅР°С‡Рµ СЃС‡РёС‚Р°РµРј, С‡С‚Рѕ СЌС‚Рѕ С‚РµРєСЃС‚ РґР»СЏ РїРѕРёСЃРєР° РїРѕ РѕСЃРЅРѕРІРЅРѕРјСѓ РїРѕР»СЋ
             fld = self._default_text_field(object_name)
             if not fld:
                 # РљР°Рє fallback вЂ” РїСЂРѕСЃС‚Рѕ top(1) Р±РµР· С„РёР»СЊС‚СЂР°
                 return self.find_object(object_name, filters=None, expand=expand)
-            # 1-СЏ РІРѕР»РЅР°: eq в†’ substr в†’ substr_ci
             attempts = self._progressive_attempts_for_string(
                 object_name, fld, user_filters, include_only_elements=False
             )
             res = exec_attempts(attempts)
             if res.get("data"):
                 return res
-            # 2-СЏ РІРѕР»РЅР°: РїРѕРІС‚РѕСЂ СЃ IsFolder eq false (РµСЃР»Рё РїРѕР»Рµ РµСЃС‚СЊ РІ СЃС…РµРјРµ)
             if self._has_isfolder(object_name):
                 attempts2 = self._progressive_attempts_for_string(
                     object_name, fld, user_filters, include_only_elements=True
@@ -945,8 +947,6 @@ class MCPServer:
                 res = exec_attempts(attempts2)
                 return res
             return res
-
-        # РРЅР°С‡Рµ вЂ” РєР°Рє РѕР±С‹С‡РЅС‹Р№ РІС‹Р·РѕРІ
         if top is not None and int(top) <= 1:
             return self.find_object(object_name, filters=user_filters, expand=expand)
         return self.list_objects(object_name, filters=user_filters, top=top, expand=expand)
@@ -1054,8 +1054,8 @@ async def howto(
         str,
         Field(
             description=(
-                "Entity name or phrase (e.g. Catalog_РљРѕРЅС‚СЂР°РіРµРЅС‚С‹ or "
-                "'СЃРїСЂР°РІРѕС‡РЅРёРє РєРѕРЅС‚СЂР°РіРµРЅС‚С‹')"
+                "Entity name or phrase (e.g. Catalog_Контрагенты or "
+                "'справочник контрагенты')"
             ),
             max_length=256,
         ),
@@ -1079,11 +1079,11 @@ async def howto(
     ] = None,
 ) -> Dict[str, Any]:
     """
-    Р’РѕР·РІСЂР°С‰Р°РµС‚ РёРЅСЃС‚СЂСѓРєС†РёСЋ РёР· Р‘Р” РґР»СЏ СѓРєР°Р·Р°РЅРЅРѕР№ СЃСѓС‰РЅРѕСЃС‚Рё Рё РґРµР№СЃС‚РІРёСЏ.
-    РРЅСЃС‚СЂСѓРєС†РёСЏ СЃРѕРґРµСЂР¶РёС‚ РѕРїРёСЃР°РЅРёРµ, РІРѕР·РјРѕР¶РЅС‹Рµ С€Р°РіРё, СЃС…РµРјСѓ Р°СЂРіСѓРјРµРЅС‚РѕРІ Рё
-    РєР°СЂС‚Сѓ РїРѕР»РµР№. Р­С‚Рё РґР°РЅРЅС‹Рµ РЅРµРѕР±С…РѕРґРёРјРѕ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ РґР»СЏ РїРѕРґРіРѕС‚РѕРІРєРё С€Р°РіРѕРІ todo.
+    Возвращает инструкцию из БД для указанной сущности и действия.
+    Инструкция содержит описание, возможные шаги, схему аргументов и
+    карту полей. Эти данные необходимо использовать для подготовки шагов todo.
 
-    РћР±СЂР°Р±Р°С‚С‹РІР°СЋС‚СЃСЏ СЃР»СѓС‡Р°Рё РѕС‚СЃСѓС‚СЃС‚РІРёСЏ РёРЅСЃС‚СЂСѓРєС†РёРё Рё РѕС‚СЃСѓС‚СЃС‚РІРёСЏ С€Р°РіРѕРІ.
+    Обрабатываются случаи отсутствия инструкции и отсутствия шагов.
     """
     resolved = await asyncio.to_thread(
         _server.resolve_entity_name,
@@ -1126,8 +1126,8 @@ async def howto(
                 "field_map": instr.field_map,
             },
             "hint": (
-                "РЎРѕРїРѕСЃС‚Р°РІСЊС‚Рµ user_args СЃ field_map Рё РІС‹Р·РѕРІРёС‚Рµ todo. Р•СЃР»Рё "
-                "С€Р°РіРѕРІ РЅРµС‚ вЂ” РѕС‚РІРµС‚ СЃС„РѕСЂРјРёСЂСѓР№С‚Рµ РїРѕ descr."
+                "Сопоставьте user_args с field_map и вызовите todo. Если "
+                "шагов нет — ответ сформируйте по descr."
             ),
         }
     )
@@ -1195,7 +1195,7 @@ def _run_todo_step(step: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "http_code": None,
-        "http_message": f"РќРµРїРѕРґРґРµСЂР¶РёРІР°РµРјР°СЏ РѕРїРµСЂР°С†РёСЏ '{func}'",
+        "http_message": f"Неподдерживаемая операция '{func}'",
         "odata_error_code": None,
         "odata_error_message": None,
         "data": None,
@@ -1209,8 +1209,8 @@ async def todo(
         Optional[Union[Dict[str, Any], List[Dict[str, Any]]]],
         Field(
             description=(
-                "РЁР°Рі РёР»Рё РјР°СЃСЃРёРІ С€Р°РіРѕРІ (func + args), РїРѕРґРіРѕС‚РѕРІР»РµРЅРЅС‹С… РїРѕ "
-                "РёРЅСЃС‚СЂСѓРєС†РёРё howto"
+                "Шаг или массив шагов (func + args), подготовленных по "
+                "инструкции howto"
             )
         ),
     ] = None,
@@ -1218,16 +1218,16 @@ async def todo(
         Optional[Dict[str, Any]],
         Field(
             description=(
-                "РћРїС†РёРѕРЅР°Р»СЊРЅРѕ: РѕР±СЉРµРєС‚ РёРЅСЃС‚СЂСѓРєС†РёРё РёР· howto. РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ, "
-                "РµСЃР»Рё С€Р°РіРё РѕС‚СЃСѓС‚СЃС‚РІСѓСЋС‚ вЂ” С‚РѕРіРґР° Р±СѓРґРµС‚ РІРѕР·РІСЂР°С‰С‘РЅ РѕС‚РІРµС‚ РЅР° "
-                "РѕСЃРЅРѕРІРµ РѕРїРёСЃР°РЅРёСЏ (descr)."
+                "Опционально: объект инструкции из howto. Используется, "
+                "если шаги отсутствуют — тогда будет возвращён ответ на "
+                "основе описания (descr)."
             )
         ),
     ] = None,
 ) -> Dict[str, Any]:
     """
-    Р’С‹РїРѕР»РЅСЏРµС‚ С€Р°РіРё OData: search|get|create|update|delete|post|unpost.
-    Р’РѕР·РІСЂР°С‰Р°РµС‚ СЃС‚Р°С‚СѓСЃС‹ РїРѕ С€Р°РіР°Рј Рё СЃРІРѕРґРєСѓ
+    Выполняет шаги OData: search|get|create|update|delete|post|unpost.
+    Возвращает статусы по шагам и сводку
     (completed|failed|no_steps).
     """
     allowed = {
@@ -1250,7 +1250,7 @@ async def todo(
                     "steps": [],
                     "summary": {
                         "outcome": "no_steps",
-                        "message": descr or "РќРµС‚ С€Р°РіРѕРІ.",
+                        "message": descr or "Нет шагов.",
                     },
                 }
             )
@@ -1282,7 +1282,7 @@ async def todo(
                 "id": sid,
                 "status": "failed",
                 "details": {
-                    "error": f"РќРµРїРѕРґРґРµСЂР¶РёРІР°РµРјР°СЏ РѕРїРµСЂР°С†РёСЏ '{func}'",
+                    "error": f"Неподдерживаемая операция '{func}'",
                 },
             })
             all_ok = False
@@ -1307,32 +1307,32 @@ async def todo(
 @mcp.tool()
 async def solve(
         expression: Annotated[str,
-        Field(description="РњР°С‚РµРјР°С‚РёС‡РµСЃРєРѕРµ РІС‹СЂР°Р¶РµРЅРёРµ РІ РІРёРґРµ СЃС‚СЂРѕРєРё",
+        Field(description="Математическое выражение в виде строки",
         examples=["2+3", "4.2*5", "147/3", "56+68+72.3-10", "(19+134)**2", "log(10)", "sqrt(4)"],
         max_length=256)]
 ) -> Dict[str, Any]:
     """
-    Р’РѕР·РІСЂР°С‰Р°РµС‚ СЂРµР·СѓР»СЊС‚Р°С‚ РІС‹С‡РёСЃР»РµРЅРёСЏ Р°СЂРёС„РјРµС‚РёС‡РµСЃРєРѕРіРѕ РІС‹СЂР°Р¶РµРЅРёСЏ.
-    РџРѕРґРґРµСЂР¶РёРІР°СЋС‚СЃСЏ РѕРїРµСЂР°С†РёРё: +, -, *, /, //, **, sqrt, log, log10, exp
-    РџРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ СѓРєР°Р·Р°РЅРёРµ РїРѕСЂСЏРґРєР° РѕРїРµСЂР°С†РёР№ СЃ РїРѕРјРѕС‰СЊСЋ СЃРєРѕР±РѕРє
+    Возвращает результат вычисления арифметического выражения.
+    Поддерживаются операции: +, -, *, /, //, **, sqrt, log, log10, exp
+    Поддерживается указание порядка операций с помощью скобок
 
     Args:
-        expression: РјР°С‚РµРјР°С‚РёС‡РµСЃРєРѕРµ РІС‹СЂР°Р¶РµРЅРёРµ РІ РІРёРґРµ СЃС‚СЂРѕРєРё
+        expression: математическое выражение в виде строки
 
     Returns:
-        Dict СЃ СЃР»РµРґСѓСЋС‰РёРјРё РїРѕР»СЏРјРё:
-        - success (bool): Р¤Р»Р°Рі СѓСЃРїРµС€РЅРѕРіРѕ РІС‹РїРѕР»РЅРµРЅРёСЏ РѕРїРµСЂР°С†РёРё
-        - result (str|null): Р РµР·СѓР»СЊС‚Р°С‚ РІС‹С‡РёСЃР»РµРЅРёСЏ Р°СЂРёС„РјРµС‚РёС‡РµСЃРєРѕРіРѕ РІС‹СЂР°Р¶РµРЅРёСЏ РІ РІРёРґРµ СЃС‚СЂРѕРєРё
-        - error (str|null): РЎРѕРѕР±С‰РµРЅРёРµ РѕР± РѕС€РёР±РєРµ РµСЃР»Рё РѕРїРµСЂР°С†РёСЏ РЅРµ СѓРґР°Р»Р°СЃСЊ
+        Dict с следующими полями:
+        - success (bool): Флаг успешного выполнения операции
+        - result (str|null): Результат вычисления арифметического выражения в виде строки
+        - error (str|null): Сообщение об ошибке если операция не удалась
 
-    РџСЂРёРјРµСЂС‹ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ:
-       - РЈРјРЅРѕР¶РёС‚СЊ 147.5 РЅР° 5:
+    Примеры использования:
+       - Умножить 147.5 на 5:
         solve("147.5*5")
-       - Р’РѕР·РІРµСЃС‚Рё С‡РёСЃР»Рѕ 1440 РІ РєРІР°РґСЂР°С‚:
+       - Возвести число 1440 в квадрат:
         solve("1440**2")
-       - РџРѕСЃС‡РёС‚Р°С‚СЊ СЃСѓРјРјСѓ 1245, 1030, 5044, 986:
+       - Посчитать сумму 1245, 1030, 5044, 986:
         solve("1245+1030+5044+986")
-       - РџРѕСЃС‡РёС‚Р°С‚СЊ РґРµСЃСЏС‚РёС‡РЅС‹Р№ Р»РѕРіР°СЂРёС„Рј РѕС‚ 25:
+       - Посчитать десятичный логарифм от 25:
         solve("log10(25)")
     """
 
@@ -1354,19 +1354,19 @@ async def solve(
 
             for node in ast.walk(tree):
                 if not isinstance(node, allowed_nodes):
-                    raise ValueError(f"РќРµРґРѕРїСѓСЃС‚РёРјС‹Р№ СѓР·РµР»: {type(node).__name__}")
+                    raise ValueError(f"Недопустимый узел: {type(node).__name__}")
                 if isinstance(node, (ast.BinOp)):
                     if not isinstance(node.op, allowed_operations):
-                        raise ValueError(f"РќРµРґРѕРїСѓСЃС‚РёРјС‹Р№ Р±РёРЅР°СЂРЅС‹Р№ РѕРїРµСЂР°С‚РѕСЂ: {type(node.op).__name__}")
+                        raise ValueError(f"Недопустимый бинарный оператор: {type(node.op).__name__}")
                 if isinstance(node, (ast.UnaryOp)):
                     if not isinstance(node.op, allowed_operations):
-                        raise ValueError(f"РќРµРґРѕРїСѓСЃС‚РёРјС‹Р№ СѓРЅР°СЂРЅС‹Р№ РѕРїРµСЂР°С‚РѕСЂ: {type(node.op).__name__}")
+                        raise ValueError(f"Недопустимый унарный оператор: {type(node.op).__name__}")
                 if isinstance(node, ast.Name):
                     if node.id not in allowed_names:
-                        raise ValueError(f"РќРµРґРѕРїСѓСЃС‚РёРјРѕРµ РёРјСЏ: {node.id}")
+                        raise ValueError(f"Недопустимое имя: {node.id}")
                 if isinstance(node, ast.Call):
                     if node.func.id not in allowed_names:
-                        raise ValueError(f"РќРµРґРѕРїСѓСЃС‚РёРјР°СЏ С„СѓРЅРєС†РёСЏ: {node.func.id}")
+                        raise ValueError(f"Недопустимая функция: {node.func.id}")
 
             code = compile(tree, '<string>', 'eval')
             res = eval(code, {"__builtins__": {}}, allowed_names)
@@ -1380,7 +1380,7 @@ async def solve(
             return {
                 "success": False,
                 "result": None,
-                "error": f"РћС€РёР±РєР° СЂРµС€РµРЅРёСЏ РІС‹СЂР°Р¶РµРЅРёСЏ: {str(e)}"
+                "error": f"Ошибка решения выражения: {str(e)}"
             }
 
     result = await asyncio.to_thread(_sync)
@@ -1389,9 +1389,8 @@ async def solve(
 
 app = mcp.streamable_http_app()
 
+
 if __name__ == "__main__":
     import sys
 
     mcp.run(transport="sse")
-
-
