@@ -33,7 +33,7 @@ class Instruction(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "action in ('search','create','update','delete')", name="action_check"
+            "action in ('search','create','update','delete','post','unpost')", name="action_check"
         ),
         Index("idx_instructions_entity_action", "entity", "action"),
         Index(

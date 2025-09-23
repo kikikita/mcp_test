@@ -32,7 +32,7 @@ def upgrade() -> None:
         ),
         sa.Column("updated_by", sa.Text(), nullable=True),
         sa.CheckConstraint(
-            "action in ('search','create','update','delete')", name="action_check"
+            "action in ('search','create','update','delete','post','unpost')", name="action_check"
         ),
         sa.UniqueConstraint("entity", "action", name="uix_instructions_entity_action"),
     )
