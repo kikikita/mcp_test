@@ -1,122 +1,280 @@
-# mcp\_1c
+﻿# MCP 1C Platform
 
-AI Финансист
+Платформа для интеллектуальной работы с данными 1С через Model Context Protocol (MCP) с использованием LLM, агрегации инструментов, сервиса извлечения текста из PDF и веб-интерфейса на Gradio. Решение объединяет OData-подключение к 1С, хранилище инструкций, интеграцию с Google Sheets и оркестрацию запросов к крупной языковой модели.
 
----
+## Основные возможности
 
-## 1. Структура проекта
+- Единый чат-интерфейс, комбинирующий ответы LLM и инструментальные вызовы к 1С через MCP.
+- Двухфазная схема `howto` → `todo`, позволяющая модели запрашивать инструкции и исполнять шаги через OData API 1С.
+- Извлечение текста из PDF с OCR (Tesseract или PaddleOCR) и передача результатов в диалог.
+- Синхронизация инструкций из Google Sheets в Postgres и строгая фильтрация полей OData по allowlist.
+- Расширяемая архитектура: в агрегатор MCP можно добавлять дополнительные провайдеры инструментов.
+- Скрипты для запуска vLLM с моделью Salesforce/xLAM-2-32b-fc-r и поддержкой xLAM tool-calls.
+
+## Архитектура
 
 ```text
-mcp_1c/
-├── docker-compose.yml           # запуск MCP-сервера и веб-UI
-├── gradio_app.py                # веб-интерфейс чата
-├── orchestrator.py              # агент LLM↔MCP
-├── mcp_server.py                # ASGI-сервер с MCP-инструментами
-├── odata_client.py              # клиент OData для 1С
-├── pdf_parser.py                # извлечение текста из PDF
-├── prompt.py                    # системный промпт для LLM
-├── vLLM/
-│   ├── start_vllm.sh            # запуск LLM-сервера
-│   └── xlam_tool_call_parser.py # парсер tool-calls для vLLM
-└── logs/                        # логи vLLM
+[Gradio UI (порт 7860)] ───HTTP──▶ [Orchestrator (порт 9080)] ───HTTP──▶ [vLLM API (порт 8000)]
+        │                                                                 ▲
+        │                                                                 │ tool-calls
+        │                                                                 │
+        │ HTTP /tools, /call_tool                                   [MCP Tool Aggregator (порт 9001)]
+        │                                                                 │
+        │                         SSE /mcp/sse                           │
+        └───────────────▶ [MCP 1C Server (порт 4200)] ───OData──▶ 1C (standard.odata)
+                                  │
+                                  ├─▶ Postgres instructions_db (порт 5432)
+                                  └─▶ Google Sheets (инструкции)
+
+[PDF Service (порт 4300)] ⇆ Gradio UI / Orchestrator — выдаёт текст из документов для LLM.
 ```
 
----
+## Состав репозитория
 
-## 2. Запуск
+- `gradio_app_gpt_oss.py` — веб-интерфейс на Gradio, связывает пользователя, PDF-сервис и оркестратор.
+- `prod/docker-compose.yml` — единое описание инфраструктуры (Postgres, MCP-сервисы, PDF, оркестратор).
+- `prod/.env_example` — шаблон переменных окружения для продакшен-развёртывания.
+- `prod/services/mcp-1c-server/` — основной MCP-сервер: OData-клиент 1С, инструменты `howto`/`todo`/`solve`, синхронизация инструкций.
+- `prod/services/mcp-service/` — агрегатор инструментов, проксирующий вызовы LLM к MCP-серверам.
+- `prod/services/orchestrator/` — FastAPI-сервис, который ведёт диалог с LLM и инициирует tool-calls.
+- `prod/services/pdf-service/` — сервис извлечения текста из PDF с OCR.
+- `vLLM/` — скрипты запуска vLLM и парсер xLAM tool-calls.
+- `logs/` — каталог для логов LLM (создаётся при запуске скриптов).
+- `README.md` — текущий документ.
 
-### 2.1 Подготовка LLM-сервера (vLLM)
+## Предварительные требования
 
-```bash
-cd vLLM
-sh start_vllm.sh
-````
+- Docker и Docker Compose (версии с поддержкой `docker compose`).
+- Python 3.10+ (для локального запуска сервисов вне Docker).
+- Доступ к OData интерфейсу 1С и учётные данные пользователя.
+- Учётная запись Google Cloud с сервисным аккаунтом и доступом к Google Sheets.
+- GPU с объёмом памяти, достаточным для модели Salesforce/xLAM-2-32b-fc-r (для vLLM), либо другой совместимой модели.
+- Наличие Tesseract OCR и зависимостей OpenCV — автоматически устанавливаются в образ pdf-service, но потребуются локально при запуске без Docker.
 
-* Модель: `Salesforce/xLAM-2-32b-fc-r`
-* Порт: `8000`
-* Лог: `../logs/vllm.log`
+## Настройка окружения
 
----
+1. **Переменные окружения.**
+   - Скопируйте `prod/.env_example` в `prod/.env` и заполните значения.
+   - Для локального запуска UI можно использовать корневой файл `.env`.
+2. **Google Sheets.**
+   - Поместите файл сервисного аккаунта Google в `prod/services/mcp-1c-server/creds.json` (либо укажите иной путь в `GSHEETS_CREDS_PATH`).
+   - Убедитесь, что лист содержит столбцы `entity`, `action`, `descr`, `steps` (+ дополнительные, если используются).
+3. **Доступ к 1С.**
+   - Проверьте, что `MCP_1C_BASE` указывает на рабочий OData endpoint, а пользователь имеет права на чтение/изменение объектов.
+4. **LLM.**
+   - Убедитесь, что запустите vLLM (см. раздел «LLM и инструментальные вызовы»).
 
-### 2.2 Конфигурация окружения
+### Переменные окружения
 
-Создайте файл `.env` в корне проекта:
+| Переменная | Назначение | Пример |
+| --- | --- | --- |
+| `MCP_1C_BASE` | Базовый URL OData (стандартный `/odata/standard.odata`) | `http://1c.example.local/UT11/odata/standard.odata` |
+| `ONEC_USERNAME` / `ONEC_PASSWORD` | Учётные данные 1С | `svc_robot` |
+| `ONEC_VERIFY_SSL` | Верификация SSL (true/false) | `false` |
+| `MCP_1C_SSE_URL` | SSE endpoint MCP-сервера для UI | `http://localhost:9003/mcp/sse` |
+| `MCP_CMD` | Локальная команда MCP (для клиентов MCP) | `python mcp_server.py stdio` |
+| `LOG_LEVEL` / `LOG_FORMAT` | Уровень и формат логирования (`json` или `text`) | `INFO`, `json` |
+| `DEBUG` | Расширенное логирование Python | `false` |
 
-```env
-MCP_URL=http://localhost:9003/mcp/
-MCP_1C_BASE=http://192.168.18.113/TEST19/odata/standard.odata
-ONEC_USERNAME=username
-ONEC_PASSWORD=password
-GRADIO_PORT=7860
-LLM_SERVER_URL=http://host.docker.internal:8000/v1
-OPENAI_API_KEY=empty
-DEBUG=false
-LOGO_PATH=logo.jpg
-```
+| Переменная | Назначение | Пример |
+| --- | --- | --- |
+| `DATABASE_URL` | Подключение к Postgres | `postgresql+psycopg2://user:pass@instructions_db:5432/mcp_howto` |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Настройки контейнера Postgres | `mcp_user` |
+| `GSHEETS_SHEET_ID` | ID таблицы Google Sheets с инструкциями | `1AbCdEf...` |
+| `GSHEETS_RANGE` | Диапазон листа для синхронизации | `instructions!A:Z` |
+| `GSHEETS_CREDS_PATH` | Путь к JSON-файлу сервисного аккаунта | `creds.json` |
 
----
+| Переменная | Назначение | Пример |
+| --- | --- | --- |
+| `LLM_SERVER_URL` / `LLM_URL` | Endpoint LLM (OpenAI совместимый API) | `http://host.docker.internal:8000/v1` |
+| `OPENAI_API_KEY` / `LLM_API_KEY` | Ключ доступа (для vLLM может быть `empty`) | `empty` |
+| `GRADIO_PORT` | Порт UI | `7860` |
+| `LOGO_PATH` | Логотип в интерфейсе | `logo.jpg` |
+| `PDF_SERVICE_URL` | Endpoint PDF-сервиса | `http://localhost:4300` |
+| `OCR_ENGINE` / `OCR_LANG` | Настройки OCR (`tesseract`/`paddle`) | `tesseract`, `rus+eng` |
+| `API_HOST` / `API_PORT` | Служебные параметры API (для UI) | `0.0.0.0`, `8080` |
+| `MCP_GLARUS_SERVER` | Дополнительный MCP сервер (резерв) | `http://host.docker.internal:9002` |
 
-### 2.3 Запуск проекта
+## Быстрый старт (Docker Compose)
 
-```bash
-docker compose up --build
-```
+1. Перейдите в каталог `prod/` и создайте `.env` на основе примера.
+2. Скопируйте Google `creds.json` в `services/mcp-1c-server/` (или измените путь в переменной окружения).
+3. Запустите vLLM: `bash ../vLLM/start_vllm.sh` (по умолчанию модель Salesforce/xLAM-2-32b-fc-r, лог `logs/vllm.log`).
+4. Выполните в каталоге `prod/`:
+   ```bash
+   docker compose up --build
+   ```
+5. Дождитесь появления логов:
+   - `instructions_db` — готовность Postgres.
+   - `mcp_1c_server` — сообщение `Instructions synchronised from Google Sheets`.
+   - `pdf_service` — `Application startup complete`.
+6. Откройте:
+   - Gradio UI: `http://localhost:7860`
+   - Orchestrator OpenAPI: `http://localhost:9080/docs`
+   - MCP Aggregator: `http://localhost:9001/tools`
+   - PDF health-check: `http://localhost:4300/health`
 
-После запуска:
+Остановить инфраструктуру: `docker compose down` (в том же каталоге). Данные инструкций сохраняются в volume `instructions_data`.
 
-* **Gradio UI**: [http://localhost:7860](http://localhost:7860)
-* **MCP-сервер**: [http://localhost:9003/mcp/](http://localhost:9003/mcp/)
+## Ручной запуск сервисов (для разработки)
 
----
+1. Создайте и активируйте виртуальное окружение, установите зависимости:
+   ```bash
+   python -m venv .venv
+   # Linux/Mac: source .venv/bin/activate
+   # Windows PowerShell: .\.venv\Scripts\Activate.ps1
 
-## 3. Основные модули
+   pip install -r prod/services/mcp-1c-server/requirements.txt
+   pip install -r prod/services/mcp-service/requirements.txt
+   pip install -r prod/services/orchestrator/requirements.txt
+   pip install -r prod/services/pdf-service/requirements.txt
+   ```
+2. Экспортируйте нужные переменные окружения из `.env`/`prod/.env`.
+3. Запустите сервисы в отдельных терминалах:
 
-| Модуль                               | Назначение                                                          |
-| ------------------------------------ | ------------------------------------------------------------------- |
-| **gradio\_app.py**                   | Веб-чат с загрузкой PDF, отправляет запросы LLM и MCP.              |
-| **orchestrator.py**                  | Агент, обрабатывающий tool-calls LLM и вызывающий MCP-инструменты.  |
-| **mcp\_server.py**                   | MCP-инструменты для работы с 1С: метаданные, поиск, CRUD-документы. |
-| **odata\_client.py**                 | Запросы к OData API 1С (GET/POST/UPDATE/DELETE).                    |
-| **pdf\_parser.py**                   | Извлечение текста из PDF (Tesseract / PaddleOCR).                   |
-| **prompt.py**                        | Системный промпт с правилами и инструкциями для LLM.                |
-| **vLLM/xlam\_tool\_call\_parser.py** | Приведение JSON tool-вызовов к формату OpenAI API.                  |
-| **vLLM/start\_vllm.sh**              | Запуск LLM-сервера с плагином парсера.                              |
+- **MCP 1C Server**
+  ```bash
+  cd prod/services/mcp-1c-server
+  alembic -c alembic.ini upgrade head
+  python mcp_server.py
+  ```
+- **MCP Tool Aggregator**
+  ```bash
+  cd prod/services/mcp-service
+  uvicorn src.app:app --host 0.0.0.0 --port 9001 --reload
+  ```
+- **Orchestrator**
+  ```bash
+  cd prod/services/orchestrator
+  uvicorn src.app:app --host 0.0.0.0 --port 9080 --reload
+  ```
+- **PDF Service**
+  ```bash
+  cd prod/services/pdf-service
+  python pdf_server.py
+  ```
+- **Gradio UI**
+  ```bash
+  python gradio_app_gpt_oss.py
+  ```
 
----
+При запуске вне Docker измените базовый URL MCP в `SERVERS_CONFIG` (`src/app.py`) с `host.docker.internal` на `http://localhost:4200`.
 
-## 4. Логи и отладка
+Убедитесь, что vLLM запущен и переменные окружения совпадают между сервисами.
 
-* **vLLM**: `logs/vllm.log`
-* **MCP-сервер**: вывод в stdout, все вызовы инструментов логируются.
+## Компоненты
 
----
+### MCP 1C Server (`prod/services/mcp-1c-server`)
 
-## 5. Проверка поиска `search_object`
+- Основной `FastMCP`-сервер, публикующий SSE endpoint `/mcp/sse` и HTTP API через `mcp.streamable_http_app()`. В Docker Compose контейнер использует `network_mode: host` для прямого доступа к 1С.
+- Инструменты:
+  - `howto(entity, action, user_args)` — возвращает инструкцию и схему аргументов из Postgres.
+  - `todo(steps|instruction)` — исполняет шаги (`search|get|create|update|delete|post|unpost`) через OData, собирает сводку и статусы шагов.
+  - `solve(expression)` — безопасный калькулятор для арифметических выражений, доступный модели.
+- OData-клиент (`odata_client.py`) содержит:
+  - повторные попытки и пул соединений (`requests` + `HTTPAdapter`), поддержку Verbose v2/v3;
+  - нормализацию GUID, alias-таблицу сущностей (`odata_entity_aliases.json`) и фильтрацию полей (`odata_field_allowlist.json`).
+- При старте синхронизирует таблицу `instructions` из Google Sheets (см. `google/instructions_sync.py`). Любые существующие записи будут перезаписаны.
+- Хранит инструкции в Postgres (`db/` + Alembic миграции).
+- Логи: `/app/logs` внутри контейнера (`prod/services/mcp-1c-server/logs` на хосте).
 
-Добавлено подробное логирование и исправлен порядок аргументов функции
-`substringof` для совместимости с OData в 1С (подстрока передается первым
-аргументом). Теперь поисковые фильтры работают корректно при передаче
-строки, словаря или списка выражений. Примеры тестов:
+### MCP Tool Aggregator (`prod/services/mcp-service`)
 
-```python
-# строка — поиск по основному полю
-await search_object("каталог", "Контрагенты", "ООО Ромашка")
+- FastAPI-приложение, агрегирующее инструменты нескольких MCP-серверов.
+- Поддерживает SSE-транспорт через `fastmcp.client.SSETransport`, кеширует список инструментов на `cache_ttl` (по умолчанию 300 секунд).
+- Эндпоинты:
+  - `GET /tools` — список инструментов в формате OpenAI `type=function`.
+  - `POST /call_tool` — маршрутизация вызова конкретного инструмента на родительский MCP.
+- Расширяется добавлением новых записей в `SERVERS_CONFIG`. При локальном запуске обновите `base_url` на `http://localhost:4200`.
 
-# словарь — точное совпадение и частичный поиск
-await search_object("каталог", "Контрагенты", {"Description": "Ромашка"})
+### Orchestrator (`prod/services/orchestrator`)
 
-# список выражений — объединение через AND
-await search_object(
-    "каталог",
-    "Контрагенты",
-    ["IsFolder eq false", "substringof('ромашка', Description)"],
-    top=5,
-)
-```
+- FastAPI-сервис, реализующий слой LLM-агента (`AIAgent`).
+- Управляет историей сообщений, добавляет системный промпт (`prompt.SYSTEM_PROMPT`), запрашивает доступные инструменты у агрегатора, интерпретирует tool-calls.
+- Обрабатывает ошибки LLM API и возвращает пользователю сообщения с описанием проблем (ограничение rate-limit, ошибки JSON и т.д.).
+- Эндпоинт: `POST /query` с полем `messages` (формат OpenAI Chat).
 
-При возникновении ошибок в журналах отображаются типы переданных фильтров
-и фактические OData-запросы, что помогает исключить проблему
-«Неправильный тип аргумента у функции `substringof`».
+### PDF Service (`prod/services/pdf-service`)
 
----
+- FastAPI с эндпоинтами:
+  - `GET /` и `GET /health` для проверки состояния.
+  - `POST /pdf/extract` — принимает файл, параметры OCR и возвращает либо список страниц, либо словари с метаданными (`source`, `text`).
+- Использует `pdf_text_extractor.py`, который:
+  - определяет цифровые PDF vs. сканы по порогу `min_chars_for_digital`;
+  - поддерживает Tesseract и PaddleOCR, настраиваемые через форму (`ocr_engine`, `ocr_lang`, `dpi`).
+- Временные файлы хранятся в `/app/temp`, загруженные файлы — в `/app/uploads`.
 
+### Gradio UI (`gradio_app_gpt_oss.py`)
+
+- Асинхронный чат с возможностью прикреплять PDF-файлы, интеграция с PDF service через `aiohttp`.
+- Поддерживает ограничение истории (`CHAT_HISTORY_TURNS`), настраиваемую тему и логотип.
+- Делегирует логическую обработку оркестратору, передавая системный промпт `SYSTEM_PROMPT`.
+
+### LLM и инструментальные вызовы (`vLLM/`)
+
+- Скрипт `start_vllm.sh` запускает vLLM с включённой поддержкой инструментов (`--enable-auto-tool-choice`, `--tool-call-parser xlam`).
+- Файл `xlam_tool_call_parser.py` исправляет парсинг `tool_calls` под формат xLAM, что важно для корректной работы модели 32B.
+- Логи сохраняются в `logs/vllm.log`, PID — `vllm/vllm.pid`. Порт по умолчанию: `8000`.
+
+### База данных инструкций
+
+- Postgres (`instructions_db`) хранит таблицу `instructions` с колонками `entity`, `action`, `descr`, `steps`, `arg_schema`, `field_map`, `tags`.
+- Alembic миграции находятся в `alembic/` (`0001_create_instructions.py`).
+- `InstructionRepository` предоставляет слой доступа к данным; сервис автоматически обновляет записи при запуске.
+
+## Логи и диагностика
+
+| Компонент | Путь/Команда |
+| --- | --- |
+| vLLM | `logs/vllm.log` |
+| MCP 1C Server | `prod/services/mcp-1c-server/logs/*.log` и `docker compose logs mcp_1c_server` |
+| PDF Service | `prod/services/pdf-service/logs/*.log` |
+| Gradio | стандартный stdout (можно направить в файл через `LOGGING` настройки) |
+| Postgres | `docker compose logs instructions_db` |
+
+Уровень логирования управляется переменными `LOG_LEVEL` и `DEBUG`. Для детальной отладки OData можно временно снизить уровень фильтрации в `field_filter.py`.
+
+## Миграции базы данных
+
+- Применить миграции внутри контейнера:
+  ```bash
+  docker compose exec mcp_1c_server alembic -c alembic.ini upgrade head
+  ```
+- Создать новую ревизию:
+  ```bash
+  docker compose exec mcp_1c_server alembic -c alembic.ini revision -m "описание изменения"
+  ```
+- При локальном запуске убедитесь, что `DATABASE_URL` указывает на доступный Postgres.
+
+## Проверка работоспособности
+
+- Убедиться, что PDF сервис отвечает:
+  ```bash
+  curl http://localhost:4300/health
+  ```
+- Получить список инструментов MCP:
+  ```bash
+  curl http://localhost:9001/tools
+  ```
+- Проверить оркестратор (пример запроса):
+  ```bash
+  curl -X POST http://localhost:9080/query \
+       -H "Content-Type: application/json" \
+       -d '{"messages":[{"role":"user","content":"Покажи 5 последних заявок"}]}'
+  ```
+- Через UI загрузить PDF и отправить запрос в чат.
+
+## Типичные проблемы
+
+- **`Failed to synchronise instructions from Google Sheets`** — проверьте `GSHEETS_SHEET_ID`, диапазон и доступ сервисного аккаунта.
+- **`ODataConnectionError` или таймауты** — проверьте URL 1С, сетевое подключение контейнера и значения `ONEC_USERNAME`/`ONEC_PASSWORD`.
+- **LLM отвечает ошибкой 429/500** — убедитесь, что vLLM запущен и доступен, при необходимости перезапустите `start_vllm.sh`.
+- **`Tool 'howto' not found`** — проверьте, что MCP 1C Server запустился и агрегатор обновил кэш (`GET /tools`).
+- **PDF не распознан (пустой ответ)** — увеличьте `dpi` или переключитесь на `ocr_engine=paddle` (требует GPU/CPU ресурсов).
+
+## Дальнейшие шаги
+
+- Добавить другие MCP-сервисы в `SERVERS_CONFIG` (например, сторонние источники данных).
+- Расширить Google Sheet дополнительными инструкциями и полями (`arg_schema`, `field_map`).
+- Настроить CI/CD для автоматического деплоя контейнеров и прогонки тестов.
+- Разработать автоматические тесты для OData операций и пайплайна обработки PDF.
