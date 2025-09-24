@@ -12,22 +12,7 @@
 - Скрипты для запуска vLLM с моделью Salesforce/xLAM-2-32b-fc-r и поддержкой xLAM tool-calls.
 
 ## Архитектура
-
-```text
-[Gradio UI (порт 7860)] ───HTTP──▶ [Orchestrator (порт 9080)] ───HTTP──▶ [vLLM API (порт 8000)]
-        │                                                                 ▲
-        │                                                                 │ tool-calls
-        │                                                                 │
-        │ HTTP /tools, /call_tool                                   [MCP Tool Aggregator (порт 9001)]
-        │                                                                 │
-        │                         SSE /mcp/sse                           │
-        └───────────────▶ [MCP 1C Server (порт 4200)] ───OData──▶ 1C (standard.odata)
-                                  │
-                                  ├─▶ Postgres instructions_db (порт 5432)
-                                  └─▶ Google Sheets (инструкции)
-
-[PDF Service (порт 4300)] ⇆ Gradio UI / Orchestrator — выдаёт текст из документов для LLM.
-```
+![Schema](schema.png)
 
 ## Состав репозитория
 
